@@ -32,4 +32,6 @@ node sim.js 10000 2d6 7 7 1 --policy=greedy --share
 node sim.js --matrix 10000
 ```
 
-方策は `random`（無情報）/ `greedy`（相手位置のベイズ推定へ最短接近）/ `infogain`（交差を狙って情報収集）/ `hybrid`（序盤infogain→終盤greedy）。`--eps=0.4` で「確率0.4で無情報に動く」人間らしい不完全さを混ぜられる。詳細は `sim.js` 冒頭コメントと `SIMULATION.md` を参照。
+方策は `random`（無情報）/ `greedy`（相手位置のベイズ推定へ最短接近）/ `infogain`（交差を狙って情報収集）/ `hybrid`（序盤infogain→終盤greedy）/ `focal`（事前に示し合わせた中心へ向かうだけの約束事戦略）。`--eps=0.4` で「確率0.4で無情報に動く」人間らしい不完全さを混ぜられる。詳細は `sim.js` 冒頭コメントと `SIMULATION.md` を参照。
+
+> ⚠️ 2人協力版には `focal`（中心収束）という支配戦略が存在し、正規の推理プレイより強い（`SIMULATION.md` 実験6）。これを潰して推理を意味あるものにするのが3人版の**おじゃま係**。

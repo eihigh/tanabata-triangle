@@ -16,7 +16,8 @@
  *   ダイス   : NdF 記法（例 2d6, 1d3）。カンマ区切りで複数可。数字のみなら 1dF。
  *   盤       : カンマ区切り（例 7 / 5,7,9）
  *   減衰     : 0=全軌跡, 1=直近1手番, ...
- *   --policy : random | greedy | infogain | hybrid（省略時 random）
+ *   --policy : random | greedy | infogain | hybrid | focal（省略時 random）
+ *              focal=事前に示し合わせた収束点（盤の中心）へ向かうだけの「約束事」戦略
  *   --share  : 出目の相互開示 on
  *   --opp    : belief 更新に使う相手移動モデル random(v1) | greedy(v2)（省略時 random）
  *   --eps    : 確率εで無情報（ランダム）に動く。人間の不完全さのモデル（省略時 0）
@@ -317,6 +318,19 @@ function chooseMove(board, me, roll, day, maxDay, mode, rng, eps) {
     return { landing, path: samplePath(board, me.pos, landing, roll, rng) };
   }
 
+  // focal: 事前に示し合わせた収束点（盤の中心）へ向かってホバリングするだけ。
+  // belief も交差も出目も一切使わない「約束事」戦略。必勝法の脅威を測るための対照。
+  if (mode === 'focal') {
+    const c = (board.N - 1) >> 1;
+    const center = c * board.N + c;
+    let best = null, bd = Infinity;
+    for (const L of reach) {
+      const d = board.d(L, center) + rng() * 1e-6; // 中心に乗れるなら乗る、無理なら最短接近
+      if (d < bd) { bd = d; best = L; }
+    }
+    return { landing: best, path: samplePath(board, me.pos, best, roll, rng) };
+  }
+
   const belief = me.belief;
   let best = null, bestScore = -Infinity;
 
@@ -573,6 +587,14 @@ function runMatrix(trials, seed) {
       printResult(`ε=${eps}${share ? ' +出目開示' : ''}`, runCondition({ ...base, policy: 'greedy', share, eps }));
     }
   }
+
+  console.log(`\n=== 実験6: 収束点コンベンション（focal）の脅威 (2d6, 減衰1) ===`);
+  console.log(`    「二人とも盤の中心へ向かうだけ」の約束事。交差も出目も使わない`);
+  printResult('focal 7x7 7日 出目なし', runCondition({ ...base, policy: 'focal', share: false }));
+  printResult('focal 7x7 7日 出目あり', runCondition({ ...base, policy: 'focal', share: true }));
+  console.log('    ↑ 出目開示で差が出ない＝収束点必勝は出目開示のせいではない');
+  printResult('focal 9x9 4日（盤拡大＋日数短縮でも）', runCondition({ ...base, N: 9, maxDay: 4, policy: 'focal' }));
+  printResult('対照 greedy+出目 7x7 7日（正規の推理プレイ）', runCondition({ ...base, policy: 'greedy', share: true }));
 }
 
 main();
