@@ -203,7 +203,7 @@
       <ul>
         <li>織姫と彦星の2人協力。互いの位置は見えない。</li>
         <li>サイコロ2個の合計<b>ちょうど</b>の歩数で移動（上下左右・途中で止まれない）。</li>
-        <li>自分の動いた道が、相手の<b>直前の手番</b>の道と重なると、そのマスだけ ✦ で開示される。</li>
+        <li>自分が動いた道が、相手の<b>直前の手番</b>の道と重なると、そのマスが ✦ で開示される（横切った自分だけが知る。相手には伝わらない）。</li>
         <li><b>7日以内</b>に二人が<b>同じマス</b>に立てたら再会。会えなければ「また来年」。</li>
       </ul>
     </div>
@@ -391,9 +391,6 @@ function renderTurn() {
     if (G.shareRolls && news.oppRoll != null) {
       html += `<div class="news">相手は前の手番で <b class="roll">${news.oppRoll}</b> マスぶん動いたと伝えられた。</div>`;
     }
-    if (news.crossCells.length > 0) {
-      html += `<div class="news"><span class="crossmark">✦ 道が交わった！</span> 前の手番で、相手の道があなたの直前の道すじと ${news.crossCells.length} マスで重なった。盤面の ✦ を見て推理しよう。</div>`;
-    }
   }
   $('t-news').innerHTML = html;
 
@@ -510,12 +507,13 @@ $('btn-confirm').onclick = () => {
   G.lastPath[me] = [...new Set(path)];
   G.lastRoll[me] = G.roll;
 
-  // 交差は両者に開示
-  for (const c of crosses) { G.knownCross[me].add(c); G.knownCross[op].add(c); }
+  // 交差は「今、自分が動いて相手の直前の道を横切った」本人だけが知る。
+  // 被さられた側（相手）には伝えない。
+  for (const c of crosses) G.knownCross[me].add(c);
   G.newCross = crosses;
 
-  // 相手への申し送り（出目＋交差）
-  G.news[op] = { oppRoll: G.roll, crossCells: crosses };
+  // 相手への申し送りは出目のみ（交差は相手に伝えない）
+  G.news[op] = { oppRoll: G.roll };
 
   // 勝利判定（同マス限定）
   if (G.positions[me] === G.positions[op]) {

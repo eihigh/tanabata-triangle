@@ -421,11 +421,12 @@ function playGame(board, cfg, rng) {
         return { met: true, day, crossCellsTotal, anyCross, stuck };
       }
 
-      // ---- belief 更新（交差情報は両者に開示される） ----
+      // ---- belief 更新（交差は「今、相手の直前の道を横切った側」だけが知る） ----
       if (policy !== 'random') {
-        // (1) 動いた側（me）：相手の直近経路に関する観測
-        //     交差あり → 相手の経路が crosses を通った / なし → 自分の経路は相手直近経路と無縁
-        //     自分の着地マスに相手はいない（勝利していないので）
+        // (1) 動いた側（me）：相手の直近経路との交差＝相手の居場所の手がかり。
+        //     交差あり → 相手の経路が crosses を通った。
+        //     交差なし → 自分が踏んだマスは相手の直近経路に含まれない（負の情報）。
+        //     着地マスに相手はいない（勝利していないので）。
         const myClear = [...new Set(segment)]; // 交差マス以外の踏破マスは相手経路に含まれない
         observeBelief(
           board, me.belief, uniqCross, myClear,
@@ -434,20 +435,9 @@ function playGame(board, cfg, rng) {
         me.belief[me.pos] = 0;
         normalize(me.belief);
 
-        // (2) 相手側（op）：me が動いたので belief を前方伝播 → 交差観測を適用
-        //     op は自分の直近経路（自分の軌跡）を知っているので、
-        //     交差なし → me の経路（つまり me の現在地）は op の直近経路に含まれない
+        // (2) 相手側（op）：交差は伝えられない。分かるのは「me が1手番動いた」ことと、
+        //     出目開示ありならその出目だけ。前方伝播と「未出会い」除外のみ。
         op.belief = propagateBelief(board, op.belief, share ? roll : null, oppModel, op.pos);
-        const opRecent = [];
-        for (const x of op.lastPathCells) {
-          const t = op.stamp[x];
-          const hit = decay === 0 ? t >= 0 : (turn - t) <= decay;
-          if (hit) opRecent.push(x);
-        }
-        observeBelief(
-          board, op.belief, uniqCross, opRecent,
-          share ? roll : null, true
-        );
         op.belief[op.pos] = 0; // 出会っていない
         normalize(op.belief);
       }
