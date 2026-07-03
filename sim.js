@@ -21,7 +21,16 @@
  *   --share  : 出目の相互開示 on
  *   --opp    : belief 更新に使う相手移動モデル random(v1) | greedy(v2)（省略時 random）
  *   --eps    : 確率εで無情報（ランダム）に動く。人間の不完全さのモデル（省略時 0）
- *   --matrix : 第5節の実験マトリクス＋ε感度を一括実行
+ *   --ojama  : おじゃま係 none | random | choke | cage（省略時 none）。
+ *              片方が移動するたびに全知のおじゃまがデブリ（通行・停止不可マス）を1個置く。
+ *              choke=二人の最短経路DAGの最細断面を優先封鎖（壁を育てる）
+ *              cage =予測出会い地点（二人の中間・盤中央寄り）そのものと周囲を毒殺
+ *   --jvariant : デブリの効き方 shared | private（省略時 shared）
+ *              shared=両者共通の盤・両者に公開 / private=次に動く側だけに効き、相手には見えない
+ *   --jfocus : private時、標的を交互でなく常に同じ片方に集中（見えない壁での隔離）
+ *   --jcap   : デブリ総数の上限（省略時 実質無制限=毎移動1個）
+ *   --jinit  : 開始前におじゃまが布石できるデブリ数（省略時 0）
+ *   --matrix : 第5節の実験マトリクス＋ε感度＋focal＋おじゃまを一括実行
  *
  * 例: node sim.js 10000 2d6 7 7 1 --policy=greedy --share
  */
@@ -158,6 +167,146 @@ function samplePath(board, start, target, k, rng) {
     rem--;
   }
   return path;
+}
+
+/* ===================== 障害物（おじゃま係のデブリ）対応 ===================== */
+/*
+ * デブリがあると「距離＋偶奇」の高速判定が使えないため層状DPに切り替える。
+ * layers[t] = ちょうどt歩で到達できるマス集合（デブリは通行・停止とも不可）。
+ */
+function computeLayers(board, start, k, blocked) {
+  const size = board.size;
+  const layers = [new Uint8Array(size)];
+  layers[0][start] = 1;
+  for (let t = 1; t <= k; t++) {
+    const prev = layers[t - 1], cur = new Uint8Array(size);
+    for (let p = 0; p < size; p++) {
+      if (!prev[p]) continue;
+      for (const q of board.nbrs[p]) if (!blocked[q]) cur[q] = 1;
+    }
+    layers.push(cur);
+  }
+  return layers;
+}
+
+// 層状DPの結果から経路を1本後ろ向きサンプリング
+function samplePathBlocked(board, layers, target, k, rng) {
+  const rev = [target];
+  let cur = target;
+  for (let t = k; t > 0; t--) {
+    const cand = [];
+    for (const nb of board.nbrs[cur]) if (layers[t - 1][nb]) cand.push(nb);
+    cur = cand[(rng() * cand.length) | 0];
+    rev.push(cur);
+  }
+  return rev.reverse();
+}
+
+// デブリを避けたBFS距離場（おじゃまAI用）
+function bfsDist(board, from, blocked) {
+  const size = board.size;
+  const d = new Int16Array(size).fill(-1);
+  const q = new Int16Array(size);
+  let head = 0, tail = 0;
+  d[from] = 0; q[tail++] = from;
+  while (head < tail) {
+    const u = q[head++];
+    for (const v of board.nbrs[u]) {
+      if (d[v] < 0 && !blocked[v]) { d[v] = d[u] + 1; q[tail++] = v; }
+    }
+  }
+  return d;
+}
+
+/* ===================== おじゃま係AI ===================== */
+/*
+ * 全知（二人の位置・盤面をすべて見える）。片方が移動するたびにデブリを1個置く。
+ * variant 'shared' : デブリは両者共通の盤に置かれ、両者に見える
+ * variant 'private': デブリは「次に動く側」の盤にだけ効き、相手には見えない
+ *                    （各プレイヤーは自分のデブリだけ見える）
+ * 配置禁止: 両プレイヤーの現在マス（相手の立ちマスを塞げると出会いを恒久封鎖できて
+ *           しまうため）と既存デブリ。
+ */
+
+// チョークポイント封鎖: from→to の最短経路DAGのうち「断面が最も細いレベル」を優先して塞ぐ。
+// 同じ細さなら中間・盤中央寄りを好む（収束点も同時に潰れる）。壁が育つと自然に迂回距離が伸びる。
+function chokeCell(board, blocked, from, to, rng) {
+  const size = board.size;
+  const dF = bfsDist(board, from, blocked);
+  const dT = bfsDist(board, to, blocked);
+  const D = dF[to];
+  if (D >= 0 && D <= 1) {
+    // 隣接: 間に置けるマスがない → 相手の周囲を檻状に塞ぐ
+    const cand = board.nbrs[to].filter(q => !blocked[q] && q !== from);
+    return cand.length ? cand[(rng() * cand.length) | 0] : -1;
+  }
+  if (D < 0) return -1; // 既に分断済み → フォールバック（呼び出し側でランダム配置）
+  const width = new Int16Array(D);
+  for (let q = 0; q < size; q++) {
+    if (q === from || q === to) continue;
+    if (dF[q] > 0 && dT[q] > 0 && dF[q] + dT[q] === D) width[dF[q]]++;
+  }
+  const c = (board.N - 1) >> 1;
+  const center = c * board.N + c;
+  let best = -1, bs = -Infinity;
+  for (let q = 0; q < size; q++) {
+    if (q === from || q === to) continue;
+    if (dF[q] <= 0 || dT[q] <= 0 || dF[q] + dT[q] !== D) continue;
+    const lvl = dF[q];
+    const s = -100 * width[lvl] - 10 * Math.abs(lvl - D / 2) - board.d(q, center) + rng() * 1e-3;
+    if (s > bs) { bs = s; best = q; }
+  }
+  return best;
+}
+
+// 出会い地点毒殺: 二人が収束するであろう地点 M（二人の中間・盤中央寄り）を予測し、
+// M そのもの → M の周囲、の順で塞ぐ。秘匿型では「相手には見えない毒」になり、
+// 片方が M で待っても、もう片方は永遠に M に立てない＝約束事（収束点）を静かに殺す。
+function cageCell(board, blocked, posA, posB, rng) {
+  const size = board.size;
+  const c = (board.N - 1) >> 1;
+  const center = c * board.N + c;
+  let M = -1, bs = Infinity;
+  for (let q = 0; q < size; q++) {
+    if (q === posA || q === posB) continue;
+    const s = (board.d(q, posA) + board.d(q, posB)) * 10 + board.d(q, center) + rng() * 1e-3;
+    if (s < bs) { bs = s; M = q; }
+  }
+  if (M < 0) return -1;
+  if (!blocked[M]) return M; // 予測地点そのものを毒殺
+  // 既に毒済みなら周囲を檻に（M に近い空きマスを順に）
+  let best = -1, bd = Infinity;
+  for (let q = 0; q < size; q++) {
+    if (blocked[q] || q === posA || q === posB) continue;
+    const d = board.d(q, M) + rng() * 1e-3;
+    if (d < bd && d < 3) { bd = d; best = q; }
+  }
+  return best;
+}
+
+// デブリ1個の配置先を決める。戻り値 { cell, target }（cell<0なら配置不能）
+function ojamaPlace(board, cfg, blocks, posA, posB, nextMover, rng) {
+  const priv = cfg.jvariant === 'private';
+  // 秘匿型の標的: 通常は「次に動く側」に交互。--jfocus なら常に同じ片方へ集中し、
+  // 片方だけを見えない壁で隔離する（もう片方の盤は綺麗なまま）
+  const target = priv ? (cfg.jfocus ? 0 : nextMover) : 0; // shared は blocks[0]===blocks[1]
+  const blockedArr = blocks[target];
+  const from = priv ? (target === 0 ? posA : posB) : posA;
+  const to = priv ? (target === 0 ? posB : posA) : posB;
+  let cell = -1;
+  if (cfg.ojama === 'cage') cell = cageCell(board, blockedArr, posA, posB, rng);
+  if (cfg.ojama === 'choke' || (cfg.ojama === 'cage' && cell < 0)) {
+    cell = chokeCell(board, blockedArr, from, to, rng);
+  }
+  if (cell < 0) {
+    // random ポリシー / choke・cage のフォールバック
+    const legal = [];
+    for (let q = 0; q < board.size; q++) {
+      if (!blockedArr[q] && q !== posA && q !== posB) legal.push(q);
+    }
+    if (legal.length) cell = legal[(rng() * legal.length) | 0];
+  }
+  return { cell, target };
 }
 
 /* ===================== belief（相手位置の確率分布） ===================== */
@@ -298,15 +447,15 @@ function smoothField(board, belief) {
 
 /*
  * 着地マスと経路を選ぶ。
- * mode: 'random' | 'greedy' | 'infogain' | 'hybrid'
+ * mode: 'random' | 'greedy' | 'infogain' | 'hybrid' | 'focal'
+ * reach: 今回の出目で着地可能なマス（デブリ考慮済み）
+ * sampler(landing): 経路を1本サンプリング（デブリ考慮済み）
+ * myBlocks: 自分の盤のデブリ（null=なし）。focal の目標マス補正に使う
  * 戻り値 { landing, path }
  */
-function chooseMove(board, me, roll, day, maxDay, mode, rng, eps) {
-  const reach = board.reach[me.pos][roll];
-  if (reach.length === 0) return null;
-
+function chooseMove(board, me, roll, day, maxDay, mode, rng, eps, reach, sampler, myBlocks) {
   // ε-ランダム：人間の不完全さのモデル。確率 eps で無情報に動く
-  if (eps > 0 && rng() < eps) mode = 'random';
+  if (eps > 0 && mode !== 'random' && rng() < eps) mode = 'random';
 
   if (mode === 'hybrid') {
     // 序盤（約4割）は情報収集、以降は会いにいく
@@ -315,20 +464,31 @@ function chooseMove(board, me, roll, day, maxDay, mode, rng, eps) {
 
   if (mode === 'random') {
     const landing = reach[(rng() * reach.length) | 0];
-    return { landing, path: samplePath(board, me.pos, landing, roll, rng) };
+    return { landing, path: sampler(landing) };
   }
 
   // focal: 事前に示し合わせた収束点（盤の中心）へ向かってホバリングするだけ。
   // belief も交差も出目も一切使わない「約束事」戦略。必勝法の脅威を測るための対照。
+  // 中心が自分の盤で塞がれていたら「中心に最も近い空きマス」に目標を替える
+  // （決定的な走査順なので、デブリが共有・公開なら二人は同じ代替目標を選べる）。
   if (mode === 'focal') {
     const c = (board.N - 1) >> 1;
-    const center = c * board.N + c;
-    let best = null, bd = Infinity;
-    for (const L of reach) {
-      const d = board.d(L, center) + rng() * 1e-6; // 中心に乗れるなら乗る、無理なら最短接近
-      if (d < bd) { bd = d; best = L; }
+    let goal = c * board.N + c;
+    if (myBlocks && myBlocks[goal]) {
+      let bg = goal, bd = Infinity;
+      for (let q = 0; q < board.size; q++) {
+        if (myBlocks[q]) continue;
+        const d = board.d(q, goal);
+        if (d < bd) { bd = d; bg = q; }
+      }
+      goal = bg;
     }
-    return { landing: best, path: samplePath(board, me.pos, best, roll, rng) };
+    let best = null, bd2 = Infinity;
+    for (const L of reach) {
+      const d = board.d(L, goal) + rng() * 1e-6; // 目標に乗れるなら乗る、無理なら最短接近
+      if (d < bd2) { bd2 = d; best = L; }
+    }
+    return { landing: best, path: sampler(best) };
   }
 
   const belief = me.belief;
@@ -339,14 +499,14 @@ function chooseMove(board, me, roll, day, maxDay, mode, rng, eps) {
       const score = WIN_WEIGHT * belief[L] - expectedDist(board, belief, L) + rng() * 1e-6;
       if (score > bestScore) { bestScore = score; best = L; }
     }
-    return { landing: best, path: samplePath(board, me.pos, best, roll, rng) };
+    return { landing: best, path: sampler(best) };
   }
 
   // infogain: 実際に通る経路が belief の濃い領域をどれだけ横断するか
   const sm = smoothField(board, belief);
   let bestPath = null;
   for (const L of reach) {
-    const path = samplePath(board, me.pos, L, roll, rng);
+    const path = sampler(L);
     const seen = new Set();
     let info = 0;
     for (const x of path) {
@@ -384,6 +544,25 @@ function playGame(board, cfg, rng) {
   players[0].stamp[a] = 0;
   players[1].stamp[b] = 0;
 
+  // おじゃま係のデブリ盤。shared は同一配列を共有、private は各自の盤
+  const jOn = cfg.ojama && cfg.ojama !== 'none';
+  let blocks = null;
+  if (jOn) {
+    if (cfg.jvariant === 'private') blocks = [new Uint8Array(size), new Uint8Array(size)];
+    else { const sh = new Uint8Array(size); blocks = [sh, sh]; }
+  }
+  const jcap = cfg.jcap != null ? cfg.jcap : 999;
+  let debrisCount = 0;
+  const placeDebris = (nextMover) => {
+    if (!jOn || debrisCount >= jcap) return;
+    const { cell, target } = ojamaPlace(board, cfg, blocks, players[0].pos, players[1].pos, nextMover, rng);
+    if (cell >= 0) { blocks[target][cell] = 1; debrisCount++; }
+  };
+  // 事前配置: 全知おじゃまは開始位置を見てから、1日目の前にデブリを布石できる
+  if (jOn && cfg.jinit) {
+    for (let i = 0; i < cfg.jinit; i++) placeDebris(i & 1);
+  }
+
   let turn = 0, crossCellsTotal = 0, anyCross = false, stuck = 0;
 
   const rollDice = () => {
@@ -397,18 +576,37 @@ function playGame(board, cfg, rng) {
       turn++;
       const me = players[pi], op = players[1 - pi];
       const roll = rollDice();
+      const myBlocks = jOn ? blocks[pi] : null;
+
+      // 到達集合と経路サンプラ（デブリがあれば層状DP、なければ高速な事前計算）
+      let reach, layers = null;
+      if (jOn && debrisCount > 0) {
+        layers = computeLayers(board, me.pos, roll, myBlocks);
+        reach = [];
+        const Lk = layers[roll];
+        for (let q = 0; q < size; q++) if (Lk[q]) reach.push(q);
+      } else {
+        reach = board.reach[me.pos][roll];
+      }
+      const sampler = (L) => (layers
+        ? samplePathBlocked(board, layers, L, roll, rng)
+        : samplePath(board, me.pos, L, roll, rng));
+
+      // 詰み: ちょうどの歩数で止まれるマスがない → その場に留まる
+      if (reach.length === 0) {
+        stuck++;
+        me.stamp[me.pos] = turn;
+        me.lastPathCells = [me.pos];
+        me.lastRoll = roll;
+        me.moved = true;
+        // belief 更新は簡略化のため省略（詰みは稀なイベント）
+        placeDebris(1 - pi);
+        continue;
+      }
 
       // 着地選択
-      let landing, path;
-      if (board.reach[me.pos][roll].length === 0) { stuck++; continue; }
-      if (policy === 'random') {
-        const reach = board.reach[me.pos][roll];
-        landing = reach[(rng() * reach.length) | 0];
-        path = samplePath(board, me.pos, landing, roll, rng);
-      } else {
-        const mv = chooseMove(board, me, roll, day, maxDay, policy, rng, cfg.eps || 0);
-        landing = mv.landing; path = mv.path;
-      }
+      const mv = chooseMove(board, me, roll, day, maxDay, policy, rng, cfg.eps || 0, reach, sampler, myBlocks);
+      const landing = mv.landing, path = mv.path;
 
       // 交差判定（相手の減衰内スタンプとの重なり）。segment=移動で踏んだマス（出発マスは除く）
       const segment = path.slice(1);
@@ -454,8 +652,22 @@ function playGame(board, cfg, rng) {
         op.belief = propagateBelief(board, op.belief, share ? roll : null, oppModel, op.pos);
         op.belief[op.pos] = 0; // 出会っていない
         normalize(op.belief);
+
+        // 共有デブリは公開情報：相手はデブリの上には立てない。
+        // 秘匿型では相手のデブリを知らないので何も除外できない（それが情報の毒）。
+        if (jOn && cfg.jvariant !== 'private') {
+          const sh = blocks[0];
+          for (let q = 0; q < size; q++) {
+            if (sh[q]) { me.belief[q] = 0; op.belief[q] = 0; }
+          }
+          normalize(me.belief);
+          normalize(op.belief);
+        }
       }
       void prevLastPath;
+
+      // おじゃま係: 移動が終わるたびにデブリを1個置く
+      placeDebris(1 - pi);
     }
   }
   return { met: false, day: null, crossCellsTotal, anyCross, stuck };
@@ -513,6 +725,11 @@ function main() {
     else if (a.startsWith('--opp=')) flags.opp = a.slice(6);
     else if (a.startsWith('--seed=')) flags.seed = +a.slice(7);
     else if (a.startsWith('--eps=')) flags.eps = +a.slice(6);
+    else if (a.startsWith('--ojama=')) flags.ojama = a.slice(8);
+    else if (a.startsWith('--jvariant=')) flags.jvariant = a.slice(11);
+    else if (a.startsWith('--jcap=')) flags.jcap = +a.slice(7);
+    else if (a.startsWith('--jinit=')) flags.jinit = +a.slice(8);
+    else if (a === '--jfocus') flags.jfocus = true;
     else pos.push(a);
   }
 
@@ -540,8 +757,11 @@ function main() {
         trials, dice, N, maxDay, decay, policy,
         share: !!flags.share, oppModel: flags.opp || 'random', seed: flags.seed || 12345,
         eps: flags.eps || 0,
+        ojama: flags.ojama || 'none', jvariant: flags.jvariant || 'shared', jcap: flags.jcap, jinit: flags.jinit || 0,
+        jfocus: !!flags.jfocus,
       };
-      const label = `${N}x${N} ${dice.label} ${maxDay}日 減衰${decay} ${policy}${cfg.eps ? `(ε=${cfg.eps})` : ''}${cfg.share ? '+出目' : ''}${cfg.oppModel === 'greedy' ? ' oppV2' : ''}`;
+      const jl = cfg.ojama !== 'none' ? ` 邪魔${cfg.ojama}-${cfg.jvariant}${cfg.jfocus ? '(集中)' : ''}${cfg.jcap != null ? `(上限${cfg.jcap})` : ''}${cfg.jinit ? `(布石${cfg.jinit})` : ''}` : '';
+      const label = `${N}x${N} ${dice.label} ${maxDay}日 減衰${decay} ${policy}${cfg.eps ? `(ε=${cfg.eps})` : ''}${cfg.share ? '+出目' : ''}${cfg.oppModel === 'greedy' ? ' oppV2' : ''}${jl}`;
       printResult(label, runCondition(cfg));
     }
   }
@@ -595,6 +815,33 @@ function runMatrix(trials, seed) {
   console.log('    ↑ 出目開示で差が出ない＝収束点必勝は出目開示のせいではない');
   printResult('focal 9x9 4日（盤拡大＋日数短縮でも）', runCondition({ ...base, N: 9, maxDay: 4, policy: 'focal' }));
   printResult('対照 greedy+出目 7x7 7日（正規の推理プレイ）', runCondition({ ...base, policy: 'greedy', share: true }));
+
+  console.log(`\n=== 実験7: おじゃま係 — デブリ共有型(shared) vs 秘匿型(private) (7x7, 2d6, 7日, 減衰1) ===`);
+  console.log(`    片方が移動するたびに全知おじゃまがデブリ+1。shared=両者共通・公開 / private=次に動く側だけ・非公開`);
+  printResult('focal        おじゃまなし', runCondition({ ...base, policy: 'focal' }));
+  printResult('greedy+出目   おじゃまなし', runCondition({ ...base, policy: 'greedy', share: true }));
+  for (const oj of ['random', 'choke', 'cage']) {
+    for (const jv of ['shared', 'private']) {
+      printResult(`focal        ${oj}-${jv}`, runCondition({ ...base, policy: 'focal', ojama: oj, jvariant: jv }));
+      printResult(`greedy+出目   ${oj}-${jv}`, runCondition({ ...base, policy: 'greedy', share: true, ojama: oj, jvariant: jv }));
+    }
+  }
+  console.log(`    --- 秘匿・集中攻撃 (--jfocus: 常に同じ片方の盤だけに置き、見えない壁で隔離) ---`);
+  for (const oj of ['choke', 'cage']) {
+    printResult(`focal        ${oj}-private(集中)`, runCondition({ ...base, policy: 'focal', ojama: oj, jvariant: 'private', jfocus: true }));
+    printResult(`greedy+出目   ${oj}-private(集中)`, runCondition({ ...base, policy: 'greedy', share: true, ojama: oj, jvariant: 'private', jfocus: true }));
+  }
+  console.log(`    --- デブリ上限感度 (choke, greedy+出目) ---`);
+  for (const jv of ['shared', 'private']) {
+    for (const cap of [4, 7, 14]) {
+      printResult(`choke-${jv} 上限${cap}`, runCondition({ ...base, policy: 'greedy', share: true, ojama: 'choke', jvariant: jv, jcap: cap }));
+    }
+  }
+  console.log(`    --- 人間帯 ε=0.4 (greedy+出目) ---`);
+  for (const jv of ['shared', 'private']) {
+    printResult(`ε=0.4 choke-${jv}`, runCondition({ ...base, policy: 'greedy', share: true, eps: 0.4, ojama: 'choke', jvariant: jv }));
+  }
+  printResult(`ε=0.4 cage-private(集中)`, runCondition({ ...base, policy: 'greedy', share: true, eps: 0.4, ojama: 'cage', jvariant: 'private', jfocus: true }));
 }
 
 main();
