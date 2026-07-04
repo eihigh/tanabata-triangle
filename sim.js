@@ -34,7 +34,12 @@
  *              role =秘匿型でデブリ比率から集中攻撃を検知し、標的側が「錨」になる
  *              block=公知の「1移動=1デブリ」＋おじゃま方策から相手のデブリ位置を推定し
  *                    「相手はそこに立てない」を belief に反映（被おじゃまの theory-of-mind）
- *   --ojama  : おじゃま係 none | random | choke | cage | cagecenter | predict | spread（省略時 none）。
+ *   --ojama  : おじゃま係 none | random | choke | cage | cagecenter | predict | spread |
+ *              afocal | censor（省略時 none）。
+ *              censor=検閲キング（実験17・ジャム＋先交差前提）: 標的シーカーが次の手番頭に
+ *              見るはずの交差マス（標的の直前経路∩相方の直前経路）が盤上に確定した瞬間、
+ *              開示される前にそのマスへデブリを置いて握り潰す。消すべき交差が無い手番は
+ *              afocal（約束事キラー）として振る舞う。
  *              片方が移動するたびに全知のおじゃまがデブリ（通行・停止不可マス）を1個置く。
  *              choke=二人の最短経路DAGの最細断面を優先封鎖（壁を育てる）
  *              cage =予測出会い地点（二人の中間・盤中央寄り）そのものと周囲を毒殺（反応型）
@@ -48,11 +53,12 @@
  *   --jcap   : デブリ総数の上限（省略時 実質無制限=毎移動1個）
  *   --jinit  : 開始前の布石数。各盤の内側（外周を除く）に jinit 個ずつ置く（合計 2×jinit、
  *              省略時 0）。N=0〜3 の難易度レバー。外周は詰み防止で禁止。
- *   --jjam=R : ジャム（妨害電波）ルール実験（実験16）。自分の盤のデブリから距離R以内の
+ *   --jjam=R : ジャム（妨害電波）ルール実験（実験16・17）。自分の盤のデブリから距離R以内の
  *              マスでは交差ヒントが開示されず、クリア情報（相手は通っていない）も得られない。
  *              自分のデブリは見えるので「情報が出ない場所」は自分で分かる＝推理は健全なまま
- *              情報だけが痩せる。※交差マスは定義上「両盤で通行可能なマス」に限られるため、
- *              半径0（デブリマスそのもの）は現行ルールでは無効。R>=1 で初めて意味を持つ。
+ *              情報だけが痩せる。R=0（デブリマスそのもの）は移動中判定の旧ルールでは無効だが、
+ *              先交差（--precross）では「歩いた後に置かれたデブリ」が既に歩いた軌跡の上に
+ *              乗れるため有効＝キングは開示前の交差ヒントをピンポイントで検閲できる（実験17）。
  *   --jjamx=R: 秘匿ジャム。両盤のデブリの周囲Rが霧になるが、相方の盤ぶんの霧は自分には
  *              見えない。見えない霧で握り潰された交差を、プレイヤーは「交差なし＝相手は
  *              通っていない」と誤読する＝負の情報が汚染される。キングの置き方が直接
@@ -369,7 +375,8 @@ function cageAround(board, blocked, M, posA, posB, rng) {
 }
 
 // デブリ1個の配置先を決める。戻り値 { cell, target }（cell<0なら配置不能）
-function ojamaPlace(board, cfg, blocks, posA, posB, mover, rng, day) {
+// pathA/pathB: 各プレイヤーの直前経路（censor キングが交差ヒントの検閲に使う）
+function ojamaPlace(board, cfg, blocks, posA, posB, mover, rng, day, pathA, pathB) {
   const priv = cfg.jvariant === 'private';
   // 秘匿型の標的: 通常は「今動いた側」の盤に交互。--jfocus なら常に同じ片方へ集中し、
   // 片方だけを見えない壁で隔離する（もう片方の盤は綺麗なまま）
@@ -382,6 +389,26 @@ function ojamaPlace(board, cfg, blocks, posA, posB, mover, rng, day) {
   if (cfg.ojama === 'cage') cell = cageCell(board, blockedArr, posA, posB, rng);
   // afocal: 位置から予測した focal 点 F を、盤ごとに逆側から潰す賢いキング（実験11）
   else if (cfg.ojama === 'afocal') cell = afocalCell(board, blockedArr, posA, posB, target, false);
+  // censor: 検閲キング（実験17・ジャム＋先交差前提）。標的シーカーS が次の手番頭に見るはずの
+  // 交差（S.直前経路 ∩ 相方O.直前経路）は、O が動いた直後に盤上で確定し、まだ S に開示されて
+  // いない。その瞬間に交差マスへデブリを置けば R=0 のジャムで握り潰せる。複数あれば最も雄弁な
+  // マス（O の現在地に近い＝S の絞り込みが最も鋭くなるはずだったマス）を優先。
+  // 消すべき交差が無い手番（S 自身が動いた直後など）は afocal として振る舞う。
+  else if (cfg.ojama === 'censor') {
+    const sPath = target === 0 ? pathA : pathB;
+    const oPath = target === 0 ? pathB : pathA;
+    const oPos = target === 0 ? posB : posA;
+    if (mover !== target && sPath && oPath) {
+      const oSet = new Set(oPath);
+      let bd = Infinity;
+      for (const x of sPath) {
+        if (!oSet.has(x) || blockedArr[x] || x === posA || x === posB) continue;
+        const d = board.d(x, oPos) + rng() * 1e-3;
+        if (d < bd) { bd = d; cell = x; }
+      }
+    }
+    if (cell < 0) cell = afocalCell(board, blockedArr, posA, posB, target, false);
+  }
   // 読み合い用のおじゃま:
   //   cagecenter=中心だけを毒す素朴読み（プレイヤーが中心に来ると決めつける）
   //   predict   =プレイヤーの集合戦略 pfocal を読み、その日の集合点を先回りで毒す（強い読み）
@@ -393,7 +420,8 @@ function ojamaPlace(board, cfg, blocks, posA, posB, mover, rng, day) {
     cell = cageAround(board, blockedArr, menu[(day || 1) % menu.length], posA, posB, rng);
   }
   if (cfg.ojama === 'choke' || ((cfg.ojama === 'cage' || cfg.ojama === 'predict' ||
-      cfg.ojama === 'cagecenter' || cfg.ojama === 'spread' || cfg.ojama === 'afocal') && cell < 0)) {
+      cfg.ojama === 'cagecenter' || cfg.ojama === 'spread' || cfg.ojama === 'afocal' ||
+      cfg.ojama === 'censor') && cell < 0)) {
     cell = chokeCell(board, blockedArr, from, to, rng);
   }
   if (cell < 0) {
@@ -818,7 +846,8 @@ function playGame(board, cfg, rng) {
   const debrisPer = [0, 0]; // 各プレイヤーの盤に置かれた数（秘匿型の役割推論用）
   const placeDebris = (nextMover, curDay) => {
     if (!jOn || debrisCount >= jcap) return;
-    const { cell, target } = ojamaPlace(board, cfg, blocks, players[0].pos, players[1].pos, nextMover, rng, curDay);
+    const { cell, target } = ojamaPlace(board, cfg, blocks, players[0].pos, players[1].pos, nextMover, rng, curDay,
+      players[0].lastPathCells, players[1].lastPathCells);
     if (cell >= 0) { blocks[target][cell] = 1; debrisCount++; debrisPer[target]++; }
   };
   // 事前配置（布石）: 全知おじゃまは開始位置を見てから、1日目の前にデブリを置ける。
@@ -830,12 +859,12 @@ function playGame(board, cfg, rng) {
       for (let i = 0; i < cfg.jinit; i++) {
         if (debrisCount >= jcap) break;
         const arr = blocks[t];
-        let cell = cfg.ojama === 'afocal'
+        let cell = (cfg.ojama === 'afocal' || cfg.ojama === 'censor')
           ? afocalCell(board, arr, players[0].pos, players[1].pos, t, true)
           : cfg.jasym
             ? ojamaAsymOpening(board, arr, t, players[0].pos, players[1].pos)
             : ojamaOpeningPlace(board, cfg, arr, players[0].pos, players[1].pos, t, rng);
-        if (cell < 0 && cfg.ojama === 'afocal') // F近傍が埋まったら通常の内側配置へ退避
+        if (cell < 0 && (cfg.ojama === 'afocal' || cfg.ojama === 'censor')) // F近傍が埋まったら通常の内側配置へ退避
           cell = ojamaOpeningPlace(board, cfg, arr, players[0].pos, players[1].pos, t, rng);
         if (cell >= 0) { arr[cell] = 1; debrisCount++; debrisPer[t]++; }
       }
@@ -874,10 +903,10 @@ function playGame(board, cfg, rng) {
       // --jjam は trueFog==ownFog（健全な情報遮断）。--jjamx は相方の盤の霧も抑制に効くが
       // 自分には見えない＝握り潰された交差を「クリア」と誤読する（負の情報の汚染）。
       let trueFog = null, ownFog = null;
-      const jamR = cfg.jjamx || cfg.jjam || 0;
-      if (jOn && jamR > 0 && debrisCount > 0) {
+      const jamR = cfg.jjamx != null ? cfg.jjamx : (cfg.jjam != null ? cfg.jjam : -1);
+      if (jOn && jamR >= 0 && debrisCount > 0) {
         ownFog = fogMask(board, [myBlocks], jamR);
-        trueFog = cfg.jjamx ? fogMask(board, [...new Set(blocks)], jamR) : ownFog;
+        trueFog = cfg.jjamx != null ? fogMask(board, [...new Set(blocks)], jamR) : ownFog;
       }
 
       // 到達集合と経路サンプラ（デブリがあれば層状DP、なければ高速な事前計算）
@@ -1165,12 +1194,12 @@ function main() {
         share: !!flags.share, oppModel: flags.opp || 'random', seed: flags.seed || 12345,
         eps: flags.eps || 0,
         ojama: flags.ojama || 'none', jvariant: flags.jvariant || 'shared', jcap: flags.jcap, jinit: flags.jinit || 0,
-        jjam: flags.jjam || 0, jjamx: flags.jjamx || 0,
+        jjam: flags.jjam != null ? flags.jjam : null, jjamx: flags.jjamx != null ? flags.jjamx : null,
         jfocus: !!flags.jfocus, aware: flags.aware || null, sharedCross: !!flags.sharedCross,
         precross: !!flags.precross,
         pfocal: flags.pfocal || 'center', jasym: !!flags.jasym, jdump: !!flags.jdump,
       };
-      const jl = cfg.ojama !== 'none' ? ` 邪魔${cfg.ojama}-${cfg.jvariant}${cfg.jfocus ? '(集中)' : ''}${cfg.jcap != null ? `(上限${cfg.jcap})` : ''}${cfg.jinit ? `(布石${cfg.jinit}${cfg.jasym ? '非対称' : ''})` : ''}${cfg.jjam ? `(ジャム${cfg.jjam})` : ''}${cfg.jjamx ? `(秘匿ジャム${cfg.jjamx})` : ''}` : '';
+      const jl = cfg.ojama !== 'none' ? ` 邪魔${cfg.ojama}-${cfg.jvariant}${cfg.jfocus ? '(集中)' : ''}${cfg.jcap != null ? `(上限${cfg.jcap})` : ''}${cfg.jinit ? `(布石${cfg.jinit}${cfg.jasym ? '非対称' : ''})` : ''}${cfg.jjam != null ? `(ジャム${cfg.jjam})` : ''}${cfg.jjamx != null ? `(秘匿ジャム${cfg.jjamx})` : ''}` : '';
       const pl = cfg.pfocal && cfg.pfocal !== 'center' ? `[${cfg.pfocal}]` : '';
       const label = `${N}x${N} ${dice.label} ${maxDay}日 減衰${decay} ${policy}${pl}${cfg.aware ? `(認識${cfg.aware})` : ''}${cfg.eps ? `(ε=${cfg.eps})` : ''}${cfg.share ? '+出目' : ''}${cfg.precross ? '+先交差' : ''}${cfg.oppModel === 'greedy' ? ' oppV2' : ''}${jl}`;
       printResult(label, runCondition(cfg));
