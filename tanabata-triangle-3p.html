@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>七夕トライアングル 3人版</title>
+<style>
+  :root{
+    --night0:#070b1e; --night1:#0d1440; --night2:#16205c;
+    --gold:#f5d76e; --sakura:#f8b3c5;
+    --orihime:#7de8d8; --hikoboshi:#ffb164; --ojama:#c77dff;
+    --text:#e8ecff; --dim:#9aa3cc;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    font-family:"Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;
+    background:linear-gradient(160deg,var(--night0) 0%,var(--night1) 55%,var(--night2) 100%);
+    color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center;
+    position:relative;overflow-x:hidden;
+  }
+  #stars{position:fixed;inset:0;pointer-events:none;z-index:0;}
+  .star{position:absolute;border-radius:50%;background:#fff;opacity:.7;animation:tw 3s infinite alternate;}
+  @keyframes tw{from{opacity:.25;}to{opacity:.9;}}
+  #milkyway{position:fixed;pointer-events:none;z-index:0;width:220vmax;height:26vmax;left:50%;top:40%;
+    transform:translate(-50%,-50%) rotate(-28deg);
+    background:linear-gradient(90deg,transparent,rgba(180,200,255,.03) 20%,rgba(220,230,255,.07) 50%,rgba(180,200,255,.03) 80%,transparent);
+    filter:blur(6px);}
+  #app{position:relative;z-index:1;width:min(560px,94vw);padding:18px 0 32px;}
+  .screen{display:none;}
+  .screen.active{display:block;animation:fadein .35s ease;}
+  @keyframes fadein{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}
+  h1{font-size:1.7rem;text-align:center;letter-spacing:.3em;text-indent:.3em;color:var(--gold);
+    font-weight:600;margin-bottom:.2em;text-shadow:0 0 18px rgba(245,215,110,.45);}
+  .subtitle{text-align:center;color:var(--dim);font-size:.82rem;margin-bottom:1.3em;}
+  .panel{background:rgba(10,16,48,.9);border:1px solid rgba(160,180,255,.18);border-radius:14px;
+    padding:16px 18px;margin-bottom:13px;backdrop-filter:blur(3px);}
+  .panel h2{font-size:.9rem;color:var(--gold);margin-bottom:.5em;letter-spacing:.08em;}
+  .panel p,.panel li{font-size:.82rem;line-height:1.7;}
+  .panel ul{padding-left:1.2em;}
+  .note{color:var(--dim);font-size:.76rem;}
+  button{font-family:inherit;cursor:pointer;border:none;border-radius:10px;padding:12px 20px;font-size:1rem;
+    font-weight:600;color:#1a1a2e;background:linear-gradient(135deg,var(--gold),#e8b84a);
+    box-shadow:0 2px 14px rgba(245,215,110,.35);transition:transform .12s,box-shadow .12s;display:block;width:100%;}
+  button:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 4px 20px rgba(245,215,110,.5);}
+  button:disabled{opacity:.35;cursor:default;box-shadow:none;}
+  button.ghost{background:transparent;color:var(--text);border:1px solid rgba(160,180,255,.35);box-shadow:none;}
+  /* 役割セレクタ */
+  .role-card{margin-bottom:12px;}
+  .role-head{display:flex;align-items:center;gap:8px;margin-bottom:7px;font-weight:700;font-size:1rem;}
+  .role-dot{width:14px;height:14px;border-radius:50%;flex-shrink:0;}
+  .role-dot.orihime{background:var(--orihime);box-shadow:0 0 10px var(--orihime);}
+  .role-dot.hikoboshi{background:var(--hikoboshi);box-shadow:0 0 10px var(--hikoboshi);}
+  .role-dot.ojama{background:var(--ojama);box-shadow:0 0 10px var(--ojama);}
+  .opts{display:flex;flex-wrap:wrap;gap:6px;}
+  .opt{font-size:.78rem;padding:7px 11px;border-radius:8px;border:1px solid rgba(160,180,255,.3);
+    background:rgba(120,140,220,.08);color:var(--text);cursor:pointer;transition:.12s;font-weight:600;}
+  .opt:hover{background:rgba(120,140,220,.2);}
+  .opt.sel{background:var(--gold);color:#1a1a2e;border-color:var(--gold);}
+  .opt .tag{font-size:.66rem;color:var(--dim);display:block;font-weight:400;}
+  .opt.sel .tag{color:#4a3a10;}
+  .toggle-row{display:flex;align-items:center;justify-content:space-between;gap:12px;}
+  .switch{position:relative;width:52px;height:28px;flex-shrink:0;}
+  .switch input{opacity:0;width:0;height:0;}
+  .slider{position:absolute;inset:0;border-radius:28px;cursor:pointer;background:rgba(120,130,180,.35);transition:.2s;}
+  .slider::before{content:"";position:absolute;width:22px;height:22px;border-radius:50%;left:3px;top:3px;background:#fff;transition:.2s;}
+  .switch input:checked + .slider{background:var(--gold);}
+  .switch input:checked + .slider::before{transform:translateX(24px);}
+  /* 手渡し */
+  .handoff-center{text-align:center;padding:38px 0 24px;}
+  .handoff-day{color:var(--dim);letter-spacing:.2em;margin-bottom:14px;}
+  .handoff-name{font-size:1.6rem;font-weight:700;margin-bottom:6px;}
+  .handoff-name.orihime{color:var(--orihime);text-shadow:0 0 16px rgba(125,232,216,.5);}
+  .handoff-name.hikoboshi{color:var(--hikoboshi);text-shadow:0 0 16px rgba(255,177,100,.5);}
+  .handoff-name.ojama{color:var(--ojama);text-shadow:0 0 16px rgba(199,125,255,.5);}
+  .handoff-sub{color:var(--dim);font-size:.84rem;margin-bottom:26px;}
+  /* 手番 */
+  .turn-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:9px;padding:0 2px;}
+  .turn-day{font-size:.88rem;color:var(--gold);letter-spacing:.12em;}
+  .turn-player{font-size:1.02rem;font-weight:700;}
+  .turn-player.orihime{color:var(--orihime);} .turn-player.hikoboshi{color:var(--hikoboshi);} .turn-player.ojama{color:var(--ojama);}
+  .news{border-left:3px solid var(--sakura);background:rgba(248,179,197,.08);border-radius:0 10px 10px 0;
+    padding:9px 13px;margin-bottom:11px;font-size:.82rem;line-height:1.6;}
+  .news b.roll{color:var(--gold);font-size:1.05em;} .news .cm{color:var(--sakura);}
+  #board{display:grid;gap:4px;grid-template-columns:repeat(7,1fr);margin:0 auto 12px;width:100%;aspect-ratio:1;
+    padding:10px;background:rgba(6,10,34,.85);border:1px solid rgba(160,180,255,.22);border-radius:14px;}
+  .cell{position:relative;border-radius:7px;background:rgba(120,140,220,.08);border:1px solid rgba(140,160,230,.10);
+    display:flex;align-items:center;justify-content:center;font-size:clamp(11px,3.2vw,18px);
+    transition:background .15s,box-shadow .15s;user-select:none;}
+  .cell.trail{background:rgba(140,160,230,.16);}
+  .cell.trail0{box-shadow:inset 0 0 0 1px rgba(125,232,216,.25);}
+  .cell.trail1{box-shadow:inset 0 0 0 1px rgba(255,177,100,.25);}
+  .cell.lastpath{background:rgba(160,185,255,.26);}
+  .cell.cross::after{content:"✦";color:var(--sakura);position:absolute;text-shadow:0 0 8px rgba(248,179,197,.8);}
+  .cell.newcross::after{animation:pop .6s ease;}
+  @keyframes pop{0%{transform:scale(0);}60%{transform:scale(1.6);}100%{transform:scale(1);}}
+  .cell.debris{background:repeating-linear-gradient(45deg,#3a2233,#3a2233 4px,#2a1826 4px,#2a1826 8px);border-color:#5a2a4a;}
+  .cell.debris::before{content:"✕";color:#e08ab0;font-weight:700;opacity:.8;}
+  .cell.d0::after{content:"◤";position:absolute;left:2px;top:0;font-size:9px;color:var(--orihime);}
+  .cell.d1::after{content:"◢";position:absolute;right:2px;bottom:0;font-size:9px;color:var(--hikoboshi);}
+  .cell.me::before{content:"";position:absolute;inset:18%;border-radius:50%;}
+  .cell.me.orihime::before{background:radial-gradient(circle,#d8fff7 15%,var(--orihime) 60%,transparent 75%);box-shadow:0 0 14px var(--orihime);}
+  .cell.me.hikoboshi::before{background:radial-gradient(circle,#ffe9d2 15%,var(--hikoboshi) 60%,transparent 75%);box-shadow:0 0 14px var(--hikoboshi);}
+  .cell.p0::before{content:"";position:absolute;inset:22%;border-radius:50%;background:radial-gradient(circle,#d8fff7 15%,var(--orihime) 60%,transparent 78%);box-shadow:0 0 12px var(--orihime);}
+  .cell.p1::before{content:"";position:absolute;inset:22%;border-radius:50%;background:radial-gradient(circle,#ffe9d2 15%,var(--hikoboshi) 60%,transparent 78%);box-shadow:0 0 12px var(--hikoboshi);}
+  .cell.reach{cursor:pointer;background:rgba(245,215,110,.13);border-color:rgba(245,215,110,.45);}
+  .cell.reach:hover{background:rgba(245,215,110,.3);}
+  .cell.sel{background:rgba(245,215,110,.42);box-shadow:0 0 12px rgba(245,215,110,.6);}
+  .cell.pathprev{box-shadow:inset 0 0 0 2px rgba(245,215,110,.55);}
+  .cell.place{cursor:pointer;box-shadow:inset 0 0 0 1px rgba(199,125,255,.4);}
+  .cell.place:hover{background:rgba(199,125,255,.25);}
+  .cell.placesel{background:rgba(199,125,255,.5);box-shadow:0 0 12px rgba(199,125,255,.7);}
+  .dice-row{display:flex;gap:10px;justify-content:center;align-items:center;margin:4px 0 10px;min-height:56px;}
+  .die{width:46px;height:46px;border-radius:10px;background:#f6f4ec;color:#1a1a2e;display:flex;align-items:center;
+    justify-content:center;font-size:1.4rem;font-weight:700;box-shadow:0 3px 10px rgba(0,0,0,.4);animation:pop .35s ease;}
+  .dice-sum{font-size:1.05rem;color:var(--gold);font-weight:700;}
+  .prompt{text-align:center;font-size:.85rem;margin-bottom:11px;min-height:1.5em;}
+  .prompt .em{color:var(--gold);font-weight:700;}
+  .ojama-info{display:flex;justify-content:space-around;font-size:.8rem;margin-bottom:10px;color:var(--dim);}
+  .ojama-info b{color:var(--text);}
+  .ai-center{text-align:center;padding:44px 0;}
+  .ai-spin{font-size:2.4rem;margin-bottom:14px;animation:tw 1s infinite alternate;}
+  .ai-name{font-size:1.3rem;font-weight:700;margin-bottom:6px;}
+  .ai-line{color:var(--dim);font-size:.85rem;min-height:1.4em;}
+  .result-center{text-align:center;padding:26px 0;}
+  .result-title{font-size:1.9rem;font-weight:700;margin-bottom:12px;letter-spacing:.12em;}
+  .result-title.win{color:var(--gold);text-shadow:0 0 24px rgba(245,215,110,.6);}
+  .result-title.lose{color:var(--ojama);text-shadow:0 0 20px rgba(199,125,255,.5);}
+  .result-sub{font-size:.92rem;line-height:1.9;margin-bottom:24px;}
+  .reunion{font-size:2.8rem;margin-bottom:14px;animation:pop .8s ease;}
+  .btn-stack{display:grid;gap:10px;}
+  .legend{display:flex;flex-wrap:wrap;gap:10px 16px;justify-content:center;font-size:.72rem;color:var(--dim);margin-bottom:8px;}
+  .legend span{display:flex;align-items:center;gap:5px;}
+  .lg{width:11px;height:11px;border-radius:50%;}
+</style>
+</head>
+<body>
+<div id="milkyway"></div>
+<div id="stars"></div>
+<div id="app">
+
+  <!-- 設定 -->
+  <div class="screen active" id="screen-setup">
+    <h1>七夕トライアングル</h1>
+    <p class="subtitle">— 三人の夜、天の川の読み合い —</p>
+    <div class="panel">
+      <div class="role-card">
+        <div class="role-head"><span class="role-dot orihime"></span>織姫（探す側）</div>
+        <div class="opts" id="opts-orihime"></div>
+      </div>
+      <div class="role-card">
+        <div class="role-head"><span class="role-dot hikoboshi"></span>彦星（探す側）</div>
+        <div class="opts" id="opts-hikoboshi"></div>
+      </div>
+      <div class="role-card" style="margin-bottom:0;">
+        <div class="role-head"><span class="role-dot ojama"></span>おじゃま（妨げる側・全知）</div>
+        <div class="opts" id="opts-ojama"></div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="toggle-row">
+        <label for="opt-share">出目の相互開示<br><span class="note">探す二人がお互いの出目（合計値）を伝え合う</span></label>
+        <span class="switch"><input type="checkbox" id="opt-share" checked><span class="slider" onclick="document.getElementById('opt-share').click()"></span></span>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>ルール</h2>
+      <ul>
+        <li>織姫と彦星は互いの位置が見えない。7×7・サイコロ2個の合計ちょうどで移動。</li>
+        <li>自分が動いた道が相手の<b>直前の道</b>と重なると、その交差マス✦が<b>自分だけ</b>に見える。</li>
+        <li>おじゃまは全知。各手番、次に動く側の盤に<b>デブリ</b>（通れないマス）を1つ置く。デブリは<b>置かれた本人にしか見えない</b>。</li>
+        <li>7日以内に二人が<b>同じマス</b>に立てば探す側の勝ち。会えなければおじゃまの勝ち。</li>
+      </ul>
+    </div>
+    <button id="btn-start">ゲームを始める</button>
+  </div>
+
+  <!-- 手渡し -->
+  <div class="screen" id="screen-handoff">
+    <div class="handoff-center">
+      <div class="handoff-day" id="ho-day"></div>
+      <div class="handoff-name" id="ho-name"></div>
+      <div class="handoff-sub" id="ho-sub"></div>
+      <button id="btn-open">画面をひらく</button>
+    </div>
+  </div>
+
+  <!-- シーカー手番 -->
+  <div class="screen" id="screen-seek">
+    <div class="turn-head"><span class="turn-day" id="s-day"></span><span class="turn-player" id="s-player"></span></div>
+    <div id="s-news"></div>
+    <div id="board-seek" class="board-holder"></div>
+    <div class="dice-row" id="s-dice"></div>
+    <div class="prompt" id="s-prompt"></div>
+    <div class="btn-stack">
+      <button id="s-roll">サイコロを振る</button>
+      <button id="s-confirm" style="display:none">このマスに移動</button>
+      <button id="s-end" style="display:none">手番を終える</button>
+    </div>
+  </div>
+
+  <!-- おじゃま手番 -->
+  <div class="screen" id="screen-ojama">
+    <div class="turn-head"><span class="turn-day" id="o-day"></span><span class="turn-player ojama">おじゃま（全知）</span></div>
+    <div class="ojama-info" id="o-info"></div>
+    <div class="legend">
+      <span><span class="lg" style="background:var(--orihime)"></span>織姫</span>
+      <span><span class="lg" style="background:var(--hikoboshi)"></span>彦星</span>
+      <span>◤=織姫の盤のデブリ ◢=彦星の盤のデブリ</span>
+    </div>
+    <div id="board-ojama"></div>
+    <div class="prompt" id="o-prompt"></div>
+    <div class="btn-stack">
+      <button id="o-confirm" disabled>ここにデブリを置く</button>
+    </div>
+  </div>
+
+  <!-- AI手番 -->
+  <div class="screen" id="screen-ai">
+    <div class="ai-center">
+      <div class="ai-spin" id="ai-emoji">✦</div>
+      <div class="ai-name" id="ai-name"></div>
+      <div class="ai-line" id="ai-line"></div>
+    </div>
+  </div>
+
+  <!-- 結果 -->
+  <div class="screen" id="screen-result">
+    <div class="result-center">
+      <div class="reunion" id="r-emoji"></div>
+      <div class="result-title" id="r-title"></div>
+      <div class="result-sub" id="r-sub"></div>
+      <button id="btn-again">もういちど</button>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+/* ===== 定数 ===== */
+const N=7, SZ=N*N, MAX_DAY=7, NDICE=2, FACES=6, DECAY=1;
+const CENTER=((N-1>>1))*N+((N-1)>>1);
+const NEG=-1e9;
+const AI_THINK=320, AI_POST=380; // AI手番の演出ディレイ(ms)
+const ROLES=['orihime','hikoboshi','ojama'];
+const RNAME={orihime:'織姫',hikoboshi:'彦星',ojama:'おじゃま'};
+/* AIの種類 */
+const SEEKER_AIS=[
+  {id:'human',label:'人間',tag:'あなたが操作'},
+  {id:'greedy',label:'AI推理',tag:'交差から推定'},
+  {id:'center',label:'AI中心集合',tag:'中心で待ち合わせ'},
+  {id:'wander',label:'AI変幻集合',tag:'集合点を動かす'},
+  {id:'random',label:'AIランダム',tag:'でたらめ'},
+];
+const OJAMA_AIS=[
+  {id:'human',label:'人間',tag:'あなたが操作'},
+  {id:'chase',label:'AI追尾',tag:'合流点を毒す'},
+  {id:'wall',label:'AI封鎖',tag:'間に壁を築く'},
+  {id:'random',label:'AIランダム',tag:'でたらめ'},
+];
+/* 集合点メニュー（中心＋4象限） */
+const RQ=Math.max(1,Math.round(N/4));
+const cl=v=>Math.max(0,Math.min(N-1,v));
+const cc=(N-1)>>1;
+const MENU=[cl(cc-RQ)*N+cl(cc-RQ),cl(cc-RQ)*N+cl(cc+RQ),cl(cc+RQ)*N+cl(cc-RQ),cl(cc+RQ)*N+cl(cc+RQ)];
+
+/* ===== 幾何 ===== */
+const rc=a=>[(a/N)|0,a%N];
+const dist=(a,b)=>{const[ar,ac]=rc(a),[br,bc]=rc(b);return Math.abs(ar-br)+Math.abs(ac-bc);};
+const NB=[];
+for(let a=0;a<SZ;a++){const[r,c]=rc(a),l=[];if(r>0)l.push(a-N);if(r<N-1)l.push(a+N);if(c>0)l.push(a-1);if(c<N-1)l.push(a+1);NB.push(l);}
+const PERIM=[];
+for(let a=0;a<SZ;a++){const[r,c]=rc(a);if(r===0||c===0||r===N-1||c===N-1)PERIM.push(a);}
+
+function computeLayers(start,k,blocked){
+  const layers=[new Set([start])];
+  for(let s=1;s<=k;s++){
+    const cur=new Set();
+    for(const p of layers[s-1])for(const q of NB[p])if(!blocked||!blocked[q])cur.add(q);
+    layers.push(cur);
+  }
+  return layers;
+}
+function onePathFromLayers(layers,target,k){
+  const path=[target];let cur=target;
+  for(let s=k;s>0;s--){
+    const cand=NB[cur].filter(nb=>layers[s-1].has(nb));
+    cur=cand[(Math.random()*cand.length)|0];
+    path.push(cur);
+  }
+  return path.reverse();
+}
+const rollDice=()=>{let s=0;for(let i=0;i<NDICE;i++)s+=1+((Math.random()*FACES)|0);return {sum:s,dice:Array.from({length:NDICE},()=>0)};};
+
+/* ===== belief（AI推理用） ===== */
+function makeBelief(myStart){
+  const b=new Float64Array(SZ);const minD=Math.max(4,Math.round(N*1.1));let n=0;
+  for(const p of PERIM)if(dist(myStart,p)>=minD){b[p]=1;n++;}
+  if(n===0){for(const p of PERIM){b[p]=1;n++;}}
+  for(let i=0;i<SZ;i++)b[i]/=n;return b;
+}
+function normalize(b){let s=0;for(let i=0;i<SZ;i++)s+=b[i];if(s>1e-12){for(let i=0;i<SZ;i++)b[i]/=s;return true;}return false;}
+function diffuse(b){
+  const nb=new Float64Array(SZ);
+  for(let q=0;q<SZ;q++){if(b[q]<=0)continue;nb[q]+=b[q]*0.45;const ns=NB[q];for(const m of ns)nb[m]+=b[q]*0.55/ns.length;}
+  return nb;
+}
+function observeCross(b,crossCells,R){
+  if(crossCells.length===0)return;
+  const nb=new Float64Array(SZ);
+  for(let q=0;q<SZ;q++){if(b[q]<=0)continue;let like=0;
+    for(const c of crossCells){const d=dist(c,q);if(d<=R)like+=(R+1-d);}
+    nb[q]=b[q]*like;}
+  let s=0;for(let q=0;q<SZ;q++)s+=nb[q];
+  if(s>1e-12)for(let q=0;q<SZ;q++)b[q]=nb[q];
+}
+function expectedDist(b,L){let e=0;for(let q=0;q<SZ;q++)if(b[q]>1e-15)e+=b[q]*dist(L,q);return e;}
+
+/* ===== ゲーム状態 ===== */
+let G=null;
+const STEPS=[{kind:'seeker',idx:0},{kind:'ojama',target:1},{kind:'seeker',idx:1},{kind:'ojama',target:0}];
+
+function newGame(cfg){
+  const minD=Math.max(4,Math.round(N*1.1));
+  const per=PERIM;let a=per[(Math.random()*per.length)|0],b;
+  do{b=per[(Math.random()*per.length)|0];}while(dist(a,b)<minD);
+  const stamp=[new Int32Array(SZ).fill(NEG),new Int32Array(SZ).fill(NEG)];
+  stamp[0][a]=0;stamp[1][b]=0;
+  G={
+    cfg, share:cfg.share,
+    day:1, step:0, turn:0,
+    pos:[a,b],
+    stamp, lastPath:[[a],[b]], lastRoll:[null,null], moved:[false,false],
+    knownCross:[new Set(),new Set()],
+    debris:[new Uint8Array(SZ),new Uint8Array(SZ)],
+    belief:[makeBelief(a),makeBelief(b)],
+    lastCross:[], news:[null,null],
+    // シーカー手番の一時状態
+    roll:null, dice:null, reach:[], layers:null, sel:null, selPath:null,
+    // おじゃま一時
+    oTarget:0, oSel:null,
+    over:false,
+  };
+  window.G=G; // デバッグ用
+}
+
+/* ===== 画面 ===== */
+const $=id=>document.getElementById(id);
+function show(id){document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));$(id).classList.add('active');}
+function kindOf(actor){return actor.kind==='seeker'?(actor.idx===0?'orihime':'hikoboshi'):'ojama';}
+function aiType(role){return G.cfg.roles[role];}
+function isHuman(role){return G.cfg.roles[role]==='human';}
+
+/* ===== 設定画面 ===== */
+const selection={orihime:'human',hikoboshi:'greedy',ojama:'chase'};
+function buildOpts(role,list){
+  const holder=$('opts-'+role);holder.innerHTML='';
+  for(const o of list){
+    const d=document.createElement('div');
+    d.className='opt'+(selection[role]===o.id?' sel':'');
+    d.innerHTML=`${o.label}<span class="tag">${o.tag}</span>`;
+    d.onclick=()=>{selection[role]=o.id;buildOpts(role,list);};
+    holder.appendChild(d);
+  }
+}
+buildOpts('orihime',SEEKER_AIS);buildOpts('hikoboshi',SEEKER_AIS);buildOpts('ojama',OJAMA_AIS);
+
+$('btn-start').onclick=()=>{
+  newGame({roles:{...selection},share:$('opt-share').checked});
+  runCurrent();
+};
+$('btn-again').onclick=()=>show('screen-setup');
+
+/* ===== 進行制御 ===== */
+function currentActor(){return STEPS[G.step];}
+function advance(){
+  G.step++;
+  if(G.step>=STEPS.length){G.step=0;G.day++;if(G.day>MAX_DAY){endGame(false);return;}}
+  runCurrent();
+}
+function runCurrent(){
+  if(G.over)return;
+  const actor=currentActor();
+  const role=kindOf(actor);
+  // おじゃまが置く場所が無い場合はスキップ
+  if(actor.kind==='ojama' && legalOjamaCells(actor.target).length===0){advance();return;}
+  if(isHuman(role)){
+    showHandoff(role,actor);
+  }else{
+    runAI(role,actor);
+  }
+}
+
+/* 手渡し */
+function showHandoff(role,actor){
+  $('ho-day').textContent=`第 ${G.day} 日 ／ ${MAX_DAY} 日`;
+  $('ho-name').textContent=RNAME[role]+' の番';
+  $('ho-name').className='handoff-name '+role;
+  $('ho-sub').innerHTML=role==='ojama'
+    ?'端末をおじゃま係に渡してください。<br>全知：二人の位置が見えます。'
+    :'端末をこのプレイヤーに渡してください。<br>ほかの人は画面を見ないでね。';
+  G._pending={role,actor};
+  show('screen-handoff');
+}
+$('btn-open').onclick=()=>{
+  const {role,actor}=G._pending;
+  if(actor.kind==='seeker')openSeeker(actor.idx);
+  else openOjama(actor.target);
+};
+
+/* ===== シーカー手番（人間） ===== */
+function openSeeker(idx){
+  G.roll=null;G.dice=null;G.sel=null;G.selPath=null;G.reach=[];G.layers=null;G._phase='roll';G._idx=idx;
+  renderSeeker();show('screen-seek');
+}
+function renderSeeker(){
+  const idx=G._idx,role=idx===0?'orihime':'hikoboshi';
+  $('s-day').textContent=`第 ${G.day} 日 ／ ${MAX_DAY} 日`;
+  $('s-player').textContent=RNAME[role];$('s-player').className='turn-player '+role;
+  // お知らせ（前手番の出目開示）
+  let html='';
+  const news=G.news[idx];
+  if(news&&G.share&&news.oppRoll!=null)html+=`<div class="news">相手は前の手番で <b class="roll">${news.oppRoll}</b> マスぶん動いたと伝えられた。</div>`;
+  $('s-news').innerHTML=html;
+  renderBoardSeek();
+  // dice
+  const dr=$('s-dice');dr.innerHTML='';
+  if(G.dice){for(const d of G.dice){const e=document.createElement('div');e.className='die';e.textContent=d;dr.appendChild(e);}
+    const su=document.createElement('div');su.className='dice-sum';su.textContent='= '+G.roll;dr.appendChild(su);}
+  // buttons/prompt
+  $('s-roll').style.display=G._phase==='roll'?'':'none';
+  $('s-confirm').style.display=G._phase==='pick'?'':'none';
+  $('s-confirm').disabled=G.sel==null;
+  $('s-end').style.display=G._phase==='done'?'':'none';
+  const p=$('s-prompt');
+  if(G._phase==='roll')p.innerHTML='サイコロを振って移動しよう。';
+  else if(G._phase==='pick')p.innerHTML=`<span class="em">${G.roll}</span> 歩ちょうどで行けるマスを選んでください。`;
+  else if(G._phase==='done'){
+    let m=G.lastCross.length>0?`<span class="em">✦ 交差を発見！</span> 相手の直前の道と ${G.lastCross.length} マスで重なった。`:'この移動では相手の道と重ならなかった。';
+    if(G.share)m+=`<br><span class="note">手番終了時、出目「${G.roll}」を相手に伝えます。</span>`;
+    p.innerHTML=m;
+  }
+}
+function renderBoardSeek(){
+  const idx=G._idx;const holder=$('board-seek');
+  const board=document.createElement('div');board.id='board';
+  const myPos=G.pos[idx],st=G.stamp[idx],deb=G.debris[idx];
+  const lastSet=new Set(G.lastPath[idx]);
+  const reachSet=new Set(G._phase==='pick'?G.reach:[]);
+  const prevSet=new Set(G.selPath||[]);
+  const ncSet=new Set(G._phase==='done'?G.lastCross:[]);
+  for(let c=0;c<SZ;c++){
+    const d=document.createElement('div');d.className='cell';
+    if(deb[c])d.classList.add('debris');
+    else{
+      if(st[c]>NEG)d.classList.add('trail');
+      if(lastSet.has(c))d.classList.add('lastpath');
+      if(G.knownCross[idx].has(c))d.classList.add('cross');
+      if(ncSet.has(c))d.classList.add('newcross');
+      if(prevSet.has(c)&&c!==myPos)d.classList.add('pathprev');
+      if(c===myPos)d.classList.add('me',idx===0?'orihime':'hikoboshi');
+      if(reachSet.has(c)){d.classList.add('reach');if(c===G.sel)d.classList.add('sel');d.onclick=()=>pickCell(c);}
+    }
+    board.appendChild(d);
+  }
+  holder.innerHTML='';holder.appendChild(board);
+}
+$('s-roll').onclick=()=>{
+  const r=rollDice();G.roll=r.sum;G.dice=[1+((Math.random()*FACES)|0)];
+  // 実際の2個の目を見せる
+  let a=1+((Math.random()*FACES)|0),b=G.roll-a;
+  while(b<1||b>FACES){a=1+((Math.random()*FACES)|0);b=G.roll-a;}
+  G.dice=[a,b];
+  G.layers=computeLayers(G.pos[G._idx],G.roll,G.debris[G._idx]);
+  G.reach=[...G.layers[G.roll]];
+  if(G.reach.length===0){ // 詰み
+    applyStuck(G._idx,G.roll);G._phase='done';G.lastCross=[];renderSeeker();
+  }else{G._phase='pick';renderSeeker();}
+};
+function pickCell(c){G.sel=c;G.selPath=onePathFromLayers(G.layers,c,G.roll);renderSeeker();}
+$('s-confirm').onclick=()=>{
+  const win=applySeekerMove(G._idx,G.sel,G.selPath,G.roll);
+  if(win){endGame(true);return;}
+  G._phase='done';G.sel=null;renderSeeker();
+};
+$('s-end').onclick=()=>advance();
+
+/* ===== おじゃま手番（人間） ===== */
+function legalOjamaCells(target){
+  const deb=G.debris[target],out=[];
+  for(let c=0;c<SZ;c++)if(!deb[c]&&c!==G.pos[0]&&c!==G.pos[1])out.push(c);
+  return out;
+}
+function openOjama(target){
+  G.oTarget=target;G.oSel=null;
+  $('o-day').textContent=`第 ${G.day} 日 ／ ${MAX_DAY} 日`;
+  const tn=target===0?'織姫':'彦星';
+  $('o-info').innerHTML=`二人の距離 <b>${dist(G.pos[0],G.pos[1])}</b>　置いた総数 <b>${totalDebris()}</b>`;
+  $('o-prompt').innerHTML=`次に動く <span class="em">${tn}</span> の盤にデブリを1つ。合流点を読んで塞ごう。`;
+  $('o-confirm').disabled=true;
+  renderBoardOjama();show('screen-ojama');
+}
+function totalDebris(){let n=0;for(let i=0;i<SZ;i++)n+=G.debris[0][i]+G.debris[1][i];return n;}
+function renderBoardOjama(){
+  const holder=$('board-ojama');const board=document.createElement('div');board.id='board';
+  const legal=new Set(legalOjamaCells(G.oTarget));
+  for(let c=0;c<SZ;c++){
+    const d=document.createElement('div');d.className='cell';
+    if(G.debris[0][c])d.classList.add('d0');
+    if(G.debris[1][c])d.classList.add('d1');
+    if(G.stamp[0][c]>NEG)d.classList.add('trail','trail0');
+    if(G.stamp[1][c]>NEG)d.classList.add('trail','trail1');
+    if(c===G.pos[0])d.classList.add('p0');
+    if(c===G.pos[1])d.classList.add('p1');
+    if(legal.has(c)){d.classList.add('place');if(c===G.oSel)d.classList.add('placesel');d.onclick=()=>{G.oSel=c;$('o-confirm').disabled=false;renderBoardOjama();};}
+    board.appendChild(d);
+  }
+  holder.innerHTML='';holder.appendChild(board);
+}
+$('o-confirm').onclick=()=>{
+  if(G.oSel==null)return;
+  G.debris[G.oTarget][G.oSel]=1;
+  advance();
+};
+
+/* ===== 手の適用 ===== */
+function applySeekerMove(idx,landing,path,roll){
+  G.turn++;const op=1-idx;
+  const seg=path.slice(1);
+  const cr=[];
+  for(const x of seg){const t=G.stamp[op][x];if(t>NEG+1&&(G.turn-t)<=DECAY)cr.push(x);}
+  const uniq=[...new Set(cr)];
+  for(const x of path)G.stamp[idx][x]=G.turn;
+  G.lastPath[idx]=[...new Set(path)];
+  G.pos[idx]=landing;G.lastRoll[idx]=roll;G.moved[idx]=true;
+  for(const c of uniq)G.knownCross[idx].add(c);
+  G.lastCross=uniq;
+  // 相手への申し送り（出目のみ）
+  G.news[op]={oppRoll:roll};
+  // belief更新
+  const R=(G.share&&G.moved[op]&&G.lastRoll[op]!=null)?G.lastRoll[op]:(NDICE*FACES);
+  observeCross(G.belief[idx],uniq,R);G.belief[idx][landing]=0;normalize(G.belief[idx]);
+  G.belief[op]=diffuse(G.belief[op]);G.belief[op][G.pos[op]]=0;normalize(G.belief[op]);
+  return landing===G.pos[op];
+}
+function applyStuck(idx,roll){
+  G.turn++;const op=1-idx;
+  G.stamp[idx][G.pos[idx]]=G.turn;G.lastPath[idx]=[G.pos[idx]];G.lastRoll[idx]=roll;G.moved[idx]=true;
+  G.lastCross=[];G.news[op]={oppRoll:roll};
+  G.belief[op]=diffuse(G.belief[op]);G.belief[op][G.pos[op]]=0;normalize(G.belief[op]);
+}
+
+/* ===== AI ===== */
+function focalGoalFor(type,deb){
+  let goal=type==='wander'?MENU[(Math.imul(G.day,2654435761)>>>0)%MENU.length]:CENTER;
+  if(deb&&deb[goal]){let bg=goal,bd=Infinity;for(let q=0;q<SZ;q++){if(deb[q])continue;const d=dist(q,goal);if(d<bd){bd=d;bg=q;}}goal=bg;}
+  return goal;
+}
+function chooseSeekerLanding(idx,type,reach){
+  if(type==='random')return reach[(Math.random()*reach.length)|0];
+  if(type==='center'||type==='wander'){
+    const goal=focalGoalFor(type,G.debris[idx]);let best=reach[0],bd=Infinity;
+    for(const L of reach){const d=dist(L,goal)+Math.random()*1e-6;if(d<bd){bd=d;best=L;}}return best;
+  }
+  // greedy
+  const b=G.belief[idx];let best=reach[0],bs=-Infinity;
+  for(const L of reach){const s=200*b[L]-expectedDist(b,L)+Math.random()*1e-6;if(s>bs){bs=s;best=L;}}
+  return best;
+}
+function chooseOjamaCell(type,target){
+  const legal=legalOjamaCells(target);if(legal.length===0)return null;
+  if(type==='random')return legal[(Math.random()*legal.length)|0];
+  const A=G.pos[0],B=G.pos[1],D=dist(A,B);
+  let best=legal[0],bs=Infinity;
+  for(const c of legal){
+    let s;
+    if(type==='chase')s=(dist(c,A)+dist(c,B))*10+dist(c,CENTER);
+    else s=Math.abs(dist(A,c)+dist(c,B)-D)*10+Math.abs(dist(c,A)-dist(c,B))+dist(c,CENTER)*0.3; // wall: 最短経路の中間
+    s+=Math.random()*1e-3;
+    if(s<bs){bs=s;best=c;}
+  }
+  return best;
+}
+function runAI(role,actor){
+  show('screen-ai');
+  const emoji=actor.kind==='ojama'?'🌫️':'✦';
+  $('ai-emoji').textContent=emoji;
+  $('ai-name').textContent=`${RNAME[role]}（${labelOf(role)}）`;
+  $('ai-name').style.color=`var(--${role})`;
+  $('ai-line').textContent='考えています…';
+  setTimeout(()=>{
+    let line='';
+    if(actor.kind==='seeker'){
+      const idx=actor.idx,type=aiType(role);
+      const r=rollDice();const roll=r.sum;
+      const layers=computeLayers(G.pos[idx],roll,G.debris[idx]);
+      const reach=[...layers[roll]];
+      if(reach.length===0){applyStuck(idx,roll);line=`出目${roll}：止まれるマスが無く足止め。`;}
+      else{
+        const landing=chooseSeekerLanding(idx,type,reach);
+        const path=onePathFromLayers(layers,landing,roll);
+        const win=applySeekerMove(idx,landing,path,roll);
+        line=`出目${roll}で移動`+(G.lastCross.length?`／✦交差${G.lastCross.length}`:'');
+        if(win){$('ai-line').textContent=line;setTimeout(()=>endGame(true),650);return;}
+      }
+    }else{
+      const cell=chooseOjamaCell(aiType(role),actor.target);
+      if(cell!=null){G.debris[actor.target][cell]=1;const tn=actor.target===0?'織姫':'彦星';line=`${tn}の盤にデブリを設置。`;}
+      else line='置ける場所が無い。';
+    }
+    $('ai-line').textContent=line;
+    setTimeout(advance,AI_POST);
+  },AI_THINK);
+}
+function labelOf(role){
+  const list=role==='ojama'?OJAMA_AIS:SEEKER_AIS;
+  return (list.find(o=>o.id===aiType(role))||{label:'AI'}).label;
+}
+
+/* ===== 結果 ===== */
+function endGame(seekersWin){
+  G.over=true;
+  if(seekersWin){
+    $('r-emoji').textContent='🎋✨';
+    $('r-title').textContent='再会';$('r-title').className='result-title win';
+    $('r-sub').innerHTML=`第 ${G.day} 日、天の川のまんなかで<br>織姫と彦星はめぐり会えました。`;
+  }else{
+    $('r-emoji').textContent='🌌';
+    $('r-title').textContent='また来年';$('r-title').className='result-title lose';
+    $('r-sub').innerHTML=`七日が過ぎ、二人は出会えませんでした。<br>おじゃまの勝ち。`;
+  }
+  show('screen-result');
+}
+
+/* ===== 星空 ===== */
+(function(){const w=$('stars');for(let i=0;i<110;i++){const s=document.createElement('div');s.className='star';
+  const sz=Math.random()<.85?1.5:2.5;s.style.width=s.style.height=sz+'px';s.style.left=Math.random()*100+'%';
+  s.style.top=Math.random()*100+'%';s.style.animationDelay=(Math.random()*3)+'s';s.style.animationDuration=(2+Math.random()*3)+'s';w.appendChild(s);}})();
+</script>
+</body>
+</html>
