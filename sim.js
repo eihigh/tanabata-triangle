@@ -26,17 +26,29 @@
  *              直前軌跡の交差を知る」。--precross では「自分の直前の移動 ∩ 相手の直前の移動の
  *              交差を、動く前に知る→それを使って動く」。手番冒頭に belief を更新してから着地を
  *              選ぶので、交差を追いかけて動ける一方、当該手番の移動で新しい交差情報は生めない。
+ *              おじゃまが交差マスにデブリを置くと、その交差ヒントは検閲され開示されない。
  *   --share  : 出目の相互開示 on
  *   --opp    : belief 更新に使う相手移動モデル random(v1) | greedy(v2)（省略時 random）
- *   --eps    : 確率εで無情報（ランダム）に動く。人間の不完全さのモデル（省略時 0）
+ *   --eps    : 確率εで無情報（ランダム）に動く。シーカーの人間らしい不完全さのモデル（省略時 0）
+ *   --jeps   : 確率εでキング（おじゃま）が賢い妨害を放棄し無作為に置く。キングの人間らしい
+ *              不完全さのモデル。布石・毎手番の両方に効く（省略時 0）
  *   --aware=dist|block : デブリ認識AIの実験機構（実験8・10。いずれも素朴greedyに勝てず不採用）。
  *              dist =期待距離を自陣BFS距離で測る＋共有型は交差尤度も壁で締める
  *              block=公知の「1移動=1デブリ」＋おじゃま方策から相手のデブリ位置を推定し
  *                    「相手はそこに立てない」を belief に反映（被おじゃまの theory-of-mind）
- *   --ojama  : おじゃま係 none | random | choke | cage | cagecenter | predict | spread（省略時 none）。
- *              片方が移動するたびに全知のおじゃまがデブリ（通行・停止不可マス）を1個置く。
+ *   --ojama  : おじゃま係 none | random | choke | cage | cagecenter | predict | spread |
+ *              afocal | censor | acensor | censorpure（省略時 none）。
+ *              2日目以降、各シーカーが動く"前"に全知のおじゃまがその盤へデブリ（通行・停止不可
+ *              マス）を1個置く（初日はデブリなし＝布石のみ）。デブリを直前経路の交差マスに置くと
+ *              その交差ヒントを検閲でき（--precross 時）、当該手番の到達も塞げる。
  *              choke=二人の最短経路DAGの最細断面を優先封鎖（壁を育てる）
  *              cage =予測出会い地点（二人の中間・盤中央寄り）そのものと周囲を毒殺（反応型）
+ *              afocal=位置から予測した焦点Fを盤ごとに逆側から潰す（約束事キラー・実験12）
+ *              以下は実験15の検閲系（--precross 専用）:
+ *              censor=交差ヒントの検閲を最優先、無ければ afocal で焦点封鎖（推理と約束事の両対応）
+ *              censormax=検閲する交差マスを belief 崩壊まで実評価して選ぶ（否定的結果=censorと同等）
+ *              acensor=afocal の焦点封鎖を基本に、F近傍で交差を兼ねるマスがあれば検閲を上乗せ
+ *              censorpure=検閲だけに全振り（焦点封鎖しないので focal に無力＝一辺倒の悪例）
  *              以下は実験11の読み合い用: cagecenter=常に中心を毒す / predict=プレイヤーの
  *              集合戦略 pfocal を読んで先回り / spread=メニューを日ごとに巡回してヘッジ
  *   --pfocal : プレイヤーの集合戦略 center | rotate | wander（省略時 center。実験11）。
@@ -345,18 +357,41 @@ function cageAround(board, blocked, M, posA, posB, rng) {
 }
 
 // デブリ1個の配置先を決める。戻り値 { cell, target }（cell<0なら配置不能）
-function ojamaPlace(board, cfg, blocks, posA, posB, mover, rng, day) {
+// crossHints: target がこの手番の頭に見るはずの交差マス群（censor 系用・省略可）。
+// censorInfo: censormax 用の評価コンテキスト { belief, lastPath, subjectRoll, trueOpp }（省略可）。
+function ojamaPlace(board, cfg, blocks, posA, posB, mover, rng, day, crossHints, censorInfo) {
   const priv = cfg.jvariant === 'private';
   // 秘匿型の標的: 「今動いた側」の盤に交互に置く
   const target = priv ? mover : 0; // shared は blocks[0]===blocks[1]
   const blockedArr = blocks[target];
   const from = priv ? (target === 0 ? posA : posB) : posA;
   const to = priv ? (target === 0 ? posB : posA) : posB;
+  const opp = priv ? (target === 0 ? posB : posA) : posB; // target の相手の現在位置
   const c = (board.N - 1) >> 1, center = c * board.N + c;
   let cell = -1;
-  if (cfg.ojama === 'cage') cell = cageCell(board, blockedArr, posA, posB, rng);
+  // 不完全なキング（--jeps）: 確率 jeps で賢い妨害を放棄し、無作為な合法マスに置く。
+  // シーカーの --eps と対をなす「人間らしいキングの取りこぼし」のモデル。
+  const dumb = cfg.jeps > 0 && rng() < cfg.jeps;
+  if (dumb) { /* 賢い配置をスキップし、下の無作為フォールバックに落とす */ }
+  else if (cfg.ojama === 'cage') cell = cageCell(board, blockedArr, posA, posB, rng);
   // afocal: 位置から予測した focal 点 F を、盤ごとに逆側から潰す賢いキング（実験11）
   else if (cfg.ojama === 'afocal') cell = afocalCell(board, blockedArr, posA, posB, target, false);
+  // censor: 交差ヒント検閲を最優先。無ければ afocal で焦点を毒す（focal 対策は afocal に委ねる）
+  else if (cfg.ojama === 'censor') {
+    cell = censorCell(board, blockedArr, crossHints, opp);
+    if (cell < 0) cell = afocalCell(board, blockedArr, posA, posB, target, false);
+  }
+  // censormax: belief 崩壊を実際に評価して最も効く交差マスを検閲。無ければ afocal へ
+  else if (cfg.ojama === 'censormax') {
+    cell = censorInfo
+      ? censorSmartCell(board, censorInfo.belief, crossHints, censorInfo.lastPath, censorInfo.subjectRoll, censorInfo.trueOpp, blockedArr)
+      : censorCell(board, blockedArr, crossHints, opp);
+    if (cell < 0) cell = afocalCell(board, blockedArr, posA, posB, target, false);
+  }
+  // censorpure: 検閲だけに全振り（無ければ choke へ）。焦点封鎖をしないので focal に無力＝一辺倒の悪例
+  else if (cfg.ojama === 'censorpure') cell = censorCell(board, blockedArr, crossHints, opp);
+  // acensor: afocal の焦点封鎖を基本に、F 近傍で交差を兼ねるマスがあれば検閲を上乗せ（併用）
+  else if (cfg.ojama === 'acensor') cell = afocalCensorCell(board, blockedArr, posA, posB, target, crossHints);
   // 読み合い用のおじゃま:
   //   cagecenter=中心だけを毒す素朴読み（プレイヤーが中心に来ると決めつける）
   //   predict   =プレイヤーの集合戦略 pfocal を読み、その日の集合点を先回りで毒す（強い読み）
@@ -368,8 +403,10 @@ function ojamaPlace(board, cfg, blocks, posA, posB, mover, rng, day) {
     cell = cageAround(board, blockedArr, menu[(day || 1) % menu.length], posA, posB, rng);
   }
   if (cfg.ojama === 'choke' || ((cfg.ojama === 'cage' || cfg.ojama === 'predict' ||
-      cfg.ojama === 'cagecenter' || cfg.ojama === 'spread' || cfg.ojama === 'afocal') && cell < 0)) {
-    cell = chokeCell(board, blockedArr, from, to, rng);
+      cfg.ojama === 'cagecenter' || cfg.ojama === 'spread' || cfg.ojama === 'afocal' ||
+      cfg.ojama === 'censor' || cfg.ojama === 'acensor' || cfg.ojama === 'censorpure' ||
+      cfg.ojama === 'censormax') && cell < 0)) {
+    if (!dumb) cell = chokeCell(board, blockedArr, from, to, rng);
   }
   if (cell < 0) {
     // random ポリシー / 各cageのフォールバック
@@ -460,6 +497,72 @@ function afocalCell(board, blockedArr, posA, posB, target, interiorOnly) {
     if (dF > 2) continue;
     const sideKey = target === 0 ? q : (board.size - 1 - q); // 盤で優先する側を反転
     const score = dF * 10000 + sideKey; // 主: F近傍優先, 副: 盤ごとの側
+    if (score < bScore) { bScore = score; best = q; }
+  }
+  return best;
+}
+
+/* ===================== censor: 交差ヒントを検閲する（先交差ルール専用） =====================
+ * ルール変更（本差分）で、キングがデブリを「交差マス」の上に置くと、その交差ヒントは
+ * シーカーに開示されない（検閲）。precross の greedy は手番冒頭の最新交差で追跡するため、
+ * その最新ヒントを潰せば追跡が鈍る。ただし約束事(focal)は belief も交差も見ないので
+ * 検閲は完全に無駄打ち＝censor 一辺倒は focal に勝てない。
+ */
+
+// crossHints: target がこの手番の頭に見るはずの（まだ検閲していない）交差マス群。
+// opp: target の相手の現在位置。相手に最も近い交差マス＝最も強い位置手がかりを優先的に潰す。
+function censorCell(board, blockedArr, crossHints, opp) {
+  if (!crossHints || crossHints.length === 0) return -1;
+  let best = -1, bd = Infinity;
+  for (const q of crossHints) {
+    if (blockedArr[q] || q === opp) continue;
+    const d = board.d(q, opp);
+    if (d < bd) { bd = d; best = q; }
+  }
+  return best;
+}
+
+// censormax: 全知キングが「どの交差マスを消せば belief が最も崩れるか」を実際に評価して選ぶ。
+// 各候補マスを検閲した場合のシーカーの belief 更新をシミュレートし、真の相手位置の近傍（半径1）に
+// 残る belief 質量が最小になるマス＝シーカーが最も相手を見失うマスを返す。nearest-opp（censorCell）
+// の「近さ」ヒューリスティックと違い、負の情報の欠落や他の交差マスとの相互作用まで織り込む。
+//   belief:  シーカーの現在の belief（更新前）／ lastPath: シーカーの直前経路（負の情報源）
+//   subjectRoll: 相手の直前出目（開示ありなら数値・尤度を鋭くする、なし null）／ trueOpp: 真の相手位置
+function censorSmartCell(board, belief, crossHints, lastPath, subjectRoll, trueOpp, blockedArr) {
+  if (!belief || !crossHints) return -1;
+  const cands = crossHints.filter(q => !blockedArr[q] && q !== trueOpp);
+  if (cands.length <= 1) return cands.length ? cands[0] : -1;
+  const uniqPath = [...new Set(lastPath)];
+  const uniqCross = [...new Set(crossHints)];
+  let best = -1, bestMass = Infinity;
+  for (const c of cands) {
+    // c を検閲 ＝ 実現交差から c を除き、c は負の情報からも外す（検閲マスは未知扱い）
+    const realizedCross = uniqCross.filter(x => x !== c);
+    const clear = uniqPath.filter(x => !blockedArr[x] && x !== c);
+    const trial = Float64Array.from(belief);
+    observeBelief(board, trial, realizedCross, clear, subjectRoll, true, null);
+    let mass = 0;
+    for (let q = 0; q < board.size; q++) if (board.d(q, trueOpp) <= 1) mass += trial[q];
+    if (mass < bestMass) { bestMass = mass; best = c; }
+  }
+  return best;
+}
+
+// acensor（併用）: afocal の F 近傍候補（距離≤2）を選ぶが、交差ヒストを兼ねるマスを
+// 最優先で置く。同じ1手で「焦点封鎖」と「交差検閲」を両立させる＝約束事にも推理にも効かせる。
+// F 近傍に交差マスが無ければ純 afocal と同じ挙動（焦点封鎖）に落ちるので、focal への強さを保つ。
+function afocalCensorCell(board, blockedArr, posA, posB, target, crossHints) {
+  const F = predictFocal(board, posA, posB);
+  if (F < 0) return -1;
+  const hintSet = (crossHints && crossHints.length) ? new Set(crossHints) : null;
+  let best = -1, bScore = Infinity;
+  for (let q = 0; q < board.size; q++) {
+    if (blockedArr[q] || q === posA || q === posB) continue;
+    const dF = board.d(q, F);
+    if (dF > 2) continue;
+    const sideKey = target === 0 ? q : (board.size - 1 - q);
+    const censorBonus = (hintSet && hintSet.has(q)) ? 0 : 1; // 交差を兼ねるマスを最優先
+    const score = censorBonus * 1e8 + dF * 10000 + sideKey;
     if (score < bScore) { bScore = score; best = q; }
   }
   return best;
@@ -780,7 +883,28 @@ function playGame(board, cfg, rng) {
   const debrisPer = [0, 0]; // 各プレイヤーの盤に置かれた数（秘匿型の役割推論用）
   const placeDebris = (nextMover, curDay) => {
     if (!jOn || debrisCount >= jcap) return;
-    const { cell, target } = ojamaPlace(board, cfg, blocks, players[0].pos, players[1].pos, nextMover, rng, curDay);
+    // 検閲候補: nextMover が手番の頭に見るはずの交差マス（precross 時のみ意味を持つ）。
+    // 全知キングは両者の直前経路を知るので、その交差の上にデブリを置けばヒントを検閲できる。
+    let crossHints = null, censorInfo = null;
+    if (cfg.precross && policy !== 'random') {
+      const me = players[nextMover], op = players[1 - nextMover];
+      if (me.moved && op.moved) {
+        const opSet = new Set(op.lastPathCells);
+        const arr = blocks[nextMover];
+        crossHints = [];
+        for (const x of me.lastPathCells) if (opSet.has(x) && !arr[x]) crossHints.push(x);
+        // censormax 用: belief 崩壊を評価するための全知コンテキスト
+        if (cfg.ojama === 'censormax') {
+          censorInfo = {
+            belief: me.belief,
+            lastPath: me.lastPathCells,
+            subjectRoll: cfg.share ? op.lastRoll : null,
+            trueOpp: op.pos,
+          };
+        }
+      }
+    }
+    const { cell, target } = ojamaPlace(board, cfg, blocks, players[0].pos, players[1].pos, nextMover, rng, curDay, crossHints, censorInfo);
     if (cell >= 0) { blocks[target][cell] = 1; debrisCount++; debrisPer[target]++; }
   };
   // 事前配置（布石）: 全知おじゃまは開始位置を見てから、1日目の前にデブリを置ける。
@@ -792,12 +916,25 @@ function playGame(board, cfg, rng) {
       for (let i = 0; i < cfg.jinit; i++) {
         if (debrisCount >= jcap) break;
         const arr = blocks[t];
-        let cell = cfg.ojama === 'afocal'
+        // 不完全なキング（--jeps）: 布石も確率 jeps で無作為な内側マスに置く
+        if (cfg.jeps > 0 && rng() < cfg.jeps) {
+          let cell = -1, bd = Infinity;
+          for (const q of board.interior) {
+            if (arr[q] || q === players[0].pos || q === players[1].pos) continue;
+            const d = rng();
+            if (d < bd) { bd = d; cell = q; }
+          }
+          if (cell >= 0) { arr[cell] = 1; debrisCount++; debrisPer[t]++; }
+          continue;
+        }
+        // 布石は交差ヒントが未発生なので censor 系も afocal と同じ焦点予測配置を使う
+        const afocalOpening = cfg.ojama === 'afocal' || cfg.ojama === 'censor' || cfg.ojama === 'acensor' || cfg.ojama === 'censormax';
+        let cell = afocalOpening
           ? afocalCell(board, arr, players[0].pos, players[1].pos, t, true)
           : cfg.jasym
             ? ojamaAsymOpening(board, arr, t, players[0].pos, players[1].pos)
             : ojamaOpeningPlace(board, cfg, arr, players[0].pos, players[1].pos, t, rng);
-        if (cell < 0 && cfg.ojama === 'afocal') // F近傍が埋まったら通常の内側配置へ退避
+        if (cell < 0 && afocalOpening) // F近傍が埋まったら通常の内側配置へ退避
           cell = ojamaOpeningPlace(board, cfg, arr, players[0].pos, players[1].pos, t, rng);
         if (cell >= 0) { arr[cell] = 1; debrisCount++; debrisPer[t]++; }
       }
@@ -829,6 +966,9 @@ function playGame(board, cfg, rng) {
     for (let pi = 0; pi < 2; pi++) {
       turn++;
       const me = players[pi], op = players[1 - pi];
+      // 2日目以降: このシーカーが動く"前"に、その盤へデブリを1個置く（初日は布石のみ）。
+      // 動く前に置くことで、直前の交差ヒント（precross）を検閲でき、当該手番の到達も塞げる。
+      if (day >= 2) placeDebris(pi, day);
       const roll = rollDice();
       const myBlocks = jOn ? blocks[pi] : null;
 
@@ -848,12 +988,22 @@ function playGame(board, cfg, rng) {
 
       // precross: 「自分の直前の移動 ∩ 相手の直前の移動」の交差を、動く前に知る。
       // 手番冒頭で belief を更新してから着地を選ぶ（既定の post-move 交差は下でスキップ）。
+      // 検閲: キングがデブリを置いたマス（myBlocks）に重なる交差は開示されず、負の情報も取らない。
       if (cfg.precross && policy !== 'random' && me.moved && op.moved) {
         const opSet = new Set(op.lastPathCells);
+        const deb = myBlocks;
         const preCross = [];
-        for (const x of me.lastPathCells) if (opSet.has(x)) preCross.push(x);
+        for (const x of me.lastPathCells) if (opSet.has(x) && !(deb && deb[x])) preCross.push(x);
+        // aware=censor: 検閲リークの推理。自分の直前経路は歩いた時点では全マス空きだったので、
+        // いま自分の盤にデブリが乗っているマス＝この手番で新たに置かれた＝検閲された交差、と分かる。
+        // 相手の経路を知らずとも「自分の経路∩自分の盤の新デブリ」だけで censored 交差を復元できる。
+        if (cfg.aware === 'censor' && deb) {
+          for (const x of me.lastPathCells) if (deb[x]) preCross.push(x);
+        }
         const uniqPre = [...new Set(preCross)];
-        const preClear = [...new Set(me.lastPathCells)]; // 自分の直前経路で交差しなかったマス＝相手は通っていない
+        // 自分の直前経路で交差しなかったマス＝相手は通っていない（負の情報）。
+        // ただし検閲マスは交差だったかもしれず、情報として扱わない。
+        const preClear = [...new Set(me.lastPathCells)].filter(x => !(deb && deb[x]));
         const opBlocksKnown = (cfg.aware === 'dist' && jOn && cfg.jvariant !== 'private' && debrisCount > 0)
           ? blocks[1 - pi] : null;
         observeBelief(
@@ -872,7 +1022,6 @@ function playGame(board, cfg, rng) {
         me.lastRoll = roll;
         me.moved = true;
         // belief 更新は簡略化のため省略（詰みは稀なイベント）
-        placeDebris(pi, day);
         continue;
       }
 
@@ -983,9 +1132,6 @@ function playGame(board, cfg, rng) {
         }
       }
       void prevLastPath;
-
-      // おじゃま係: シーカーが動いた後、その本人の盤にデブリを1個置く
-      placeDebris(pi, day);
     }
   }
   return { met: false, day: null, crossCellsTotal, anyCross, stuck, minReach, firstClose2, firstClose4 };
@@ -1065,6 +1211,7 @@ function main() {
     else if (a.startsWith('--opp=')) flags.opp = a.slice(6);
     else if (a.startsWith('--seed=')) flags.seed = +a.slice(7);
     else if (a.startsWith('--eps=')) flags.eps = +a.slice(6);
+    else if (a.startsWith('--jeps=')) flags.jeps = +a.slice(7);
     else if (a.startsWith('--ojama=')) flags.ojama = a.slice(8);
     else if (a.startsWith('--jvariant=')) flags.jvariant = a.slice(11);
     else if (a.startsWith('--jcap=')) flags.jcap = +a.slice(7);
@@ -1102,7 +1249,7 @@ function main() {
       const cfg = {
         trials, dice, N, maxDay, decay, policy,
         share: !!flags.share, oppModel: flags.opp || 'random', seed: flags.seed || 12345,
-        eps: flags.eps || 0,
+        eps: flags.eps || 0, jeps: flags.jeps || 0,
         ojama: flags.ojama || 'none', jvariant: flags.jvariant || 'shared', jcap: flags.jcap, jinit: flags.jinit || 0,
         aware: flags.aware || null, sharedCross: !!flags.sharedCross,
         precross: !!flags.precross,
@@ -1110,7 +1257,7 @@ function main() {
       };
       const jl = cfg.ojama !== 'none' ? ` 邪魔${cfg.ojama}-${cfg.jvariant}${cfg.jcap != null ? `(上限${cfg.jcap})` : ''}${cfg.jinit ? `(布石${cfg.jinit}${cfg.jasym ? '非対称' : ''})` : ''}` : '';
       const pl = cfg.pfocal && cfg.pfocal !== 'center' ? `[${cfg.pfocal}]` : '';
-      const label = `${N}x${N} ${dice.label} ${maxDay}日 減衰${decay} ${policy}${pl}${cfg.aware ? `(認識${cfg.aware})` : ''}${cfg.eps ? `(ε=${cfg.eps})` : ''}${cfg.share ? '+出目' : ''}${cfg.precross ? '+先交差' : ''}${cfg.oppModel === 'greedy' ? ' oppV2' : ''}${jl}`;
+      const label = `${N}x${N} ${dice.label} ${maxDay}日 減衰${decay} ${policy}${pl}${cfg.aware ? `(認識${cfg.aware})` : ''}${cfg.eps ? `(ε=${cfg.eps})` : ''}${cfg.jeps ? `(κε=${cfg.jeps})` : ''}${cfg.share ? '+出目' : ''}${cfg.precross ? '+先交差' : ''}${cfg.oppModel === 'greedy' ? ' oppV2' : ''}${jl}`;
       printResult(label, runCondition(cfg));
     }
   }

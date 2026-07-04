@@ -202,12 +202,20 @@
       <h2>あそびかた</h2>
       <ul>
         <li>織姫と彦星の2人協力。互いの位置は見えない。</li>
-        <li>サイコロ2個の合計<b>ちょうど</b>の歩数で移動（上下左右・途中で止まれない）。</li>
+        <li>サイコロの合計<b>ちょうど</b>の歩数で移動（上下左右・途中で止まれない）。</li>
         <li>自分が動いた道が、相手の<b>直前の手番</b>の道と重なると、そのマスが ✦ で開示される（横切った自分だけが知る。相手には伝わらない）。</li>
         <li><b>7日以内</b>に二人が<b>同じマス</b>に立てたら再会。会えなければ「また来年」。</li>
       </ul>
     </div>
     <div class="panel">
+      <div class="toggle-row">
+        <label for="opt-dice">使うサイコロ<br><span class="note">2d4＝4面2個（標準）／ 1d6＝6面1個 ／ 2d6＝6面2個</span></label>
+        <select id="opt-dice">
+          <option value="2,4" selected>2d4（標準）</option>
+          <option value="1,6">1d6</option>
+          <option value="2,6">2d6</option>
+        </select>
+      </div>
       <div class="toggle-row">
         <label for="opt-share">出目の相互開示<br><span class="note">手番終了時に自分の出目（合計値）を相手に伝える</span></label>
         <span class="switch"><input type="checkbox" id="opt-share" checked><span class="slider" onclick="document.getElementById('opt-share').click()"></span></span>
@@ -261,8 +269,8 @@
 /* ===== 定数（引き継ぎ書 第2節） ===== */
 const N = 7;        // グリッド一辺
 const MAX_DAY = 7;  // 日数
-const NDICE = 2;    // サイコロ本数
-const FACES = 6;    // 面数
+let NDICE = 2;      // サイコロ本数（設定画面で変更可）
+let FACES = 4;      // 面数（設定画面で変更可）
 const DECAY = 1;    // 交差判定：直近何手番の相手軌跡を有効とするか
 
 const PLAYERS = [
@@ -357,6 +365,8 @@ function show(id) {
 }
 
 $('btn-start').onclick = () => {
+  const [n, f] = $('opt-dice').value.split(',').map(Number);
+  NDICE = n; FACES = f;
   newGame($('opt-share').checked);
   showHandoff();
 };
@@ -473,7 +483,7 @@ $('btn-roll').onclick = () => {
   G.roll = sum;
   G.reach = reachableSet(G.positions[G.pi], sum);
   if (G.reach.length === 0) {
-    // 7×7・2d6では起きないが保険
+    // 7×7・2d4では起きないが保険
     G.phase = 'done';
     G.newCross = [];
   } else {
