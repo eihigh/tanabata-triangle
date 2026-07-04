@@ -49,7 +49,6 @@
  *              center=中心固定 / rotate=日ごとにメニュー巡回 / wander=日から決まる公開擬似乱数
  *   --jvariant : デブリの効き方 shared | private（省略時 shared）
  *              shared=両者共通の盤・両者に公開 / private=次に動く側だけに効き、相手には見えない
- *   --jfocus : private時、標的を交互でなく常に同じ片方に集中（見えない壁での隔離）
  *   --jcap   : デブリ総数の上限（省略時 実質無制限=毎移動1個）
  *   --jinit  : 開始前の布石数。各盤の内側（外周を除く）に jinit 個ずつ置く（合計 2×jinit、
  *              省略時 0）。N=0〜3 の難易度レバー。外周は詰み防止で禁止。
@@ -64,7 +63,7 @@
  *              通っていない」と誤読する＝負の情報が汚染される。キングの置き方が直接
  *              「推理を難しくする」攻撃になるルール案。
  *   --jpre   : デブリ前置ルール（実験18）。既定は「各プレイヤーが動いた直後に、動いた側の
- *              盤へ1個」（--jfocus で片方固定）。--jpre は置くタイミングと標的を反転する:
+ *              盤へ1個」。--jpre は置くタイミングと標的を反転する:
  *              「布石 → 織姫移動 → 彦星移動（初日はここまで）→ 以降、毎手番
  *              〈キングが これからヒントを受け取る側 の盤にデブリ → ヒント照合 → 移動〉」。
  *              キングは両者の確定済み直前経路を見てから置けるので、確定検閲（開示直前の
@@ -385,9 +384,9 @@ function cageAround(board, blocked, M, posA, posB, rng) {
 // pathA/pathB: 各プレイヤーの直前経路（censor キングが交差ヒントの検閲に使う）
 function ojamaPlace(board, cfg, blocks, posA, posB, mover, rng, day, pathA, pathB) {
   const priv = cfg.jvariant === 'private';
-  // 秘匿型の標的: 通常は「今動いた側」の盤に交互。--jfocus なら常に同じ片方へ集中し、
-  // 片方だけを見えない壁で隔離する（もう片方の盤は綺麗なまま）
-  const target = priv ? (cfg.jfocus ? 0 : mover) : 0; // shared は blocks[0]===blocks[1]
+  // 秘匿型の標的: 「今動いた側」の盤に交互（--jpre では「これからヒントを受け取る側」）。
+  // ※かつての --jfocus（常に片方へ集中）は、盤の1/3がデブリで埋まり詰みが激増するため廃止（実験19）
+  const target = priv ? mover : 0; // shared は blocks[0]===blocks[1]
   const blockedArr = blocks[target];
   const from = priv ? (target === 0 ? posA : posB) : posA;
   const to = priv ? (target === 0 ? posB : posA) : posB;
@@ -408,7 +407,6 @@ function ojamaPlace(board, cfg, blocks, posA, posB, mover, rng, day, pathA, path
     // 「まだ開示されていない確定交差」が存在する条件:
     //   既定タイミング（移動後配置）: 相方Oが動いた直後＝mover !== target
     //   前置（--jpre・手番頭配置）  : 標的S自身の手番頭＝mover === target
-    //   （前置＋集中で標的でない側の手番頭に置く場合、交差は開示済みの古情報→afocalへ）
     const freshCross = cfg.jpre ? mover === target : mover !== target;
     if (freshCross && sPath && oPath) {
       const oSet = new Set(oPath);
@@ -1175,7 +1173,6 @@ function main() {
     else if (a.startsWith('--jinit=')) flags.jinit = +a.slice(8);
     else if (a.startsWith('--jjam=')) flags.jjam = +a.slice(7);
     else if (a.startsWith('--jjamx=')) flags.jjamx = +a.slice(8);
-    else if (a === '--jfocus') flags.jfocus = true;
     else if (a === '--jpre') flags.jpre = true;
     else if (a === '--jasym') flags.jasym = true;
     else if (a === '--jdump') flags.jdump = true;
@@ -1214,11 +1211,11 @@ function main() {
         ojama: flags.ojama || 'none', jvariant: flags.jvariant || 'shared', jcap: flags.jcap, jinit: flags.jinit || 0,
         jjam: flags.jjam != null ? flags.jjam : null, jjamx: flags.jjamx != null ? flags.jjamx : null,
         jpre: !!flags.jpre,
-        jfocus: !!flags.jfocus, aware: flags.aware || null, sharedCross: !!flags.sharedCross,
+        aware: flags.aware || null, sharedCross: !!flags.sharedCross,
         precross: !!flags.precross,
         pfocal: flags.pfocal || 'center', jasym: !!flags.jasym, jdump: !!flags.jdump,
       };
-      const jl = cfg.ojama !== 'none' ? ` 邪魔${cfg.ojama}-${cfg.jvariant}${cfg.jfocus ? '(集中)' : ''}${cfg.jcap != null ? `(上限${cfg.jcap})` : ''}${cfg.jinit ? `(布石${cfg.jinit}${cfg.jasym ? '非対称' : ''})` : ''}${cfg.jjam != null ? `(ジャム${cfg.jjam})` : ''}${cfg.jjamx != null ? `(秘匿ジャム${cfg.jjamx})` : ''}${cfg.jpre ? '(前置)' : ''}` : '';
+      const jl = cfg.ojama !== 'none' ? ` 邪魔${cfg.ojama}-${cfg.jvariant}${cfg.jcap != null ? `(上限${cfg.jcap})` : ''}${cfg.jinit ? `(布石${cfg.jinit}${cfg.jasym ? '非対称' : ''})` : ''}${cfg.jjam != null ? `(ジャム${cfg.jjam})` : ''}${cfg.jjamx != null ? `(秘匿ジャム${cfg.jjamx})` : ''}${cfg.jpre ? '(前置)' : ''}` : '';
       const pl = cfg.pfocal && cfg.pfocal !== 'center' ? `[${cfg.pfocal}]` : '';
       const label = `${N}x${N} ${dice.label} ${maxDay}日 減衰${decay} ${policy}${pl}${cfg.aware ? `(認識${cfg.aware})` : ''}${cfg.eps ? `(ε=${cfg.eps})` : ''}${cfg.share ? '+出目' : ''}${cfg.precross ? '+先交差' : ''}${cfg.oppModel === 'greedy' ? ' oppV2' : ''}${jl}`;
       printResult(label, runCondition(cfg));
@@ -1285,11 +1282,8 @@ function runMatrix(trials, seed) {
       printResult(`greedy+出目   ${oj}-${jv}`, runCondition({ ...base, policy: 'greedy', share: true, ojama: oj, jvariant: jv }));
     }
   }
-  console.log(`    --- 秘匿・集中攻撃 (--jfocus: 常に同じ片方の盤だけに置き、見えない壁で隔離) ---`);
-  for (const oj of ['choke', 'cage']) {
-    printResult(`focal        ${oj}-private(集中)`, runCondition({ ...base, policy: 'focal', ojama: oj, jvariant: 'private', jfocus: true }));
-    printResult(`greedy+出目   ${oj}-private(集中)`, runCondition({ ...base, policy: 'greedy', share: true, ojama: oj, jvariant: 'private', jfocus: true }));
-  }
+  console.log(`    ※ 集中攻撃(--jfocus)は廃止（実験19: 片盤の1/3がデブリで埋まり詰みが激増するため）。`);
+  console.log(`      SIMULATION.md 実験7〜18の「(集中)」行は旧仕様の記録＝現コードでは再現不可。`);
   console.log(`    --- デブリ上限感度 (choke, greedy+出目) ---`);
   for (const jv of ['shared', 'private']) {
     for (const cap of [4, 7, 14]) {
@@ -1300,16 +1294,14 @@ function runMatrix(trials, seed) {
   for (const jv of ['shared', 'private']) {
     printResult(`ε=0.4 choke-${jv}`, runCondition({ ...base, policy: 'greedy', share: true, eps: 0.4, ojama: 'choke', jvariant: jv }));
   }
-  printResult(`ε=0.4 cage-private(集中)`, runCondition({ ...base, policy: 'greedy', share: true, eps: 0.4, ojama: 'cage', jvariant: 'private', jfocus: true }));
 
   console.log(`\n=== 実験8: デブリを認識する協力AI（greedy+出目、両案とも不採用の記録） ===`);
   console.log(`    dist=自陣BFS距離で計画 / role=デブリ比率で集中攻撃を検知し標的が錨になる`);
   const jconfigs = [
     ['choke-shared', { ojama: 'choke', jvariant: 'shared' }],
     ['choke-private', { ojama: 'choke', jvariant: 'private' }],
-    ['choke-private(集中)', { ojama: 'choke', jvariant: 'private', jfocus: true }],
-    ['cage-private(集中)', { ojama: 'cage', jvariant: 'private', jfocus: true }],
-  ];
+    ['cage-private', { ojama: 'cage', jvariant: 'private' }],
+  ]; // ※(集中)行は jfocus 廃止（実験19）に伴い削除
   for (const [jname, jcfg] of jconfigs) {
     for (const aware of [null, 'dist', 'role']) {
       if (aware === 'role' && jcfg.jvariant !== 'private') continue; // roleは秘匿型専用
@@ -1337,9 +1329,8 @@ function runMatrix(trials, seed) {
   console.log(`    Q2: 「相手はおじゃまされていそう」を belief に足す認識block は greedy を押し上げるか`);
   const jc10 = [
     ['choke-private', { ojama: 'choke', jvariant: 'private' }],
-    ['choke-private(集中)', { ojama: 'choke', jvariant: 'private', jfocus: true }],
-    ['cage-private(集中)', { ojama: 'cage', jvariant: 'private', jfocus: true }],
-  ];
+    ['cage-private', { ojama: 'cage', jvariant: 'private' }],
+  ]; // ※(集中)行は jfocus 廃止（実験19）に伴い削除
   for (const [jname, jcfg] of jc10) {
     console.log(`  --- ${jname} ---`);
     printResult('  focal（約束事）', runCondition({ ...base, policy: 'focal', ...jcfg }));
@@ -1347,16 +1338,17 @@ function runMatrix(trials, seed) {
     printResult('  greedy+出目（素朴推理）', runCondition({ ...base, policy: 'greedy', share: true, ...jcfg }));
     printResult('  greedy+出目 認識block', runCondition({ ...base, policy: 'greedy', share: true, aware: 'block', ...jcfg }));
   }
-  console.log(`    --- ラストワンマイル分解: 認識block は接近を着地に変換できているか (cage集中) ---`);
-  const jf = { ojama: 'cage', jvariant: 'private', jfocus: true };
+  console.log(`    --- ラストワンマイル分解: 認識block は接近を着地に変換できているか (cage-private) ---`);
+  const jf = { ojama: 'cage', jvariant: 'private' };
   printDiag('focal', runCondition({ ...base, policy: 'focal', ...jf }));
   printDiag('greedy+出目', runCondition({ ...base, policy: 'greedy', share: true, ...jf }));
   printDiag('greedy+出目 認識block', runCondition({ ...base, policy: 'greedy', share: true, aware: 'block', ...jf }));
 
   console.log(`\n=== 実験11: focalを前提とした読み合い — 集合戦略 × おじゃま配置の利得マトリクス ===`);
   console.log(`    focalは悪でなく大前提。二人が"どこに集まるか"を巡る全知おじゃまとの読み合いを測る。`);
-  console.log(`    数字=出会い率%（プレイヤー視点の得点）。秘匿・集中(private/jfocus)、7x7・2d6・7日・1万試行`);
-  const jbase = { ...base, jvariant: 'private', jfocus: true };
+  console.log(`    数字=出会い率%（プレイヤー視点の得点）。秘匿(private)、7x7・2d6・7日・1万試行`);
+  console.log(`    ※ 原表（SIMULATION.md実験11）は集中(--jfocus)で測定。jfocus廃止（実験19）後の本表は数値が異なる`);
+  const jbase = { ...base, jvariant: 'private' };
   // プレイヤーの集合戦略（行）
   const prows = [
     ['center 中心固定', { policy: 'focal', pfocal: 'center' }],
