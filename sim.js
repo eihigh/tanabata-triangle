@@ -63,6 +63,13 @@
  *              見えない。見えない霧で握り潰された交差を、プレイヤーは「交差なし＝相手は
  *              通っていない」と誤読する＝負の情報が汚染される。キングの置き方が直接
  *              「推理を難しくする」攻撃になるルール案。
+ *   --jpre   : デブリ前置ルール（実験18）。既定は「各プレイヤーが動いた直後に、動いた側の
+ *              盤へ1個」（--jfocus で片方固定）。--jpre は置くタイミングと標的を反転する:
+ *              「布石 → 織姫移動 → 彦星移動（初日はここまで）→ 以降、毎手番
+ *              〈キングが これからヒントを受け取る側 の盤にデブリ → ヒント照合 → 移動〉」。
+ *              キングは両者の確定済み直前経路を見てから置けるので、確定検閲（開示直前の
+ *              交差潰し）が両プレイヤーに対して毎ヒント可能になる。デブリ総数は初日ぶん
+ *              2個少ない（7日なら12個＋布石）。
  *   --matrix : 第5節の実験マトリクス＋ε感度＋focal＋おじゃまを一括実行
  *
  * 例: node sim.js 10000 2d6 7 7 1 --policy=greedy --share
@@ -398,7 +405,12 @@ function ojamaPlace(board, cfg, blocks, posA, posB, mover, rng, day, pathA, path
     const sPath = target === 0 ? pathA : pathB;
     const oPath = target === 0 ? pathB : pathA;
     const oPos = target === 0 ? posB : posA;
-    if (mover !== target && sPath && oPath) {
+    // 「まだ開示されていない確定交差」が存在する条件:
+    //   既定タイミング（移動後配置）: 相方Oが動いた直後＝mover !== target
+    //   前置（--jpre・手番頭配置）  : 標的S自身の手番頭＝mover === target
+    //   （前置＋集中で標的でない側の手番頭に置く場合、交差は開示済みの古情報→afocalへ）
+    const freshCross = cfg.jpre ? mover === target : mover !== target;
+    if (freshCross && sPath && oPath) {
       const oSet = new Set(oPath);
       let bd = Infinity;
       for (const x of sPath) {
@@ -899,6 +911,11 @@ function playGame(board, cfg, rng) {
       const roll = rollDice();
       const myBlocks = jOn ? blocks[pi] : null;
 
+      // デブリ前置（--jpre・実験18）: ヒント照合の直前に「これからヒントを受け取る側」の盤へ
+      // 1個置く（初日＝どちらかが未移動の間は置かない）。キングは両者の確定済み直前経路を
+      // 見てから置けるので、確定検閲が毎ヒント可能。移動前なので今回の到達集合にも効く。
+      if (cfg.jpre && me.moved && op.moved) placeDebris(pi, day);
+
       // ジャム（実験16）: trueFog=ヒント抑制に使う霧、ownFog=自分に見える霧（自分の盤のみ）。
       // --jjam は trueFog==ownFog（健全な情報遮断）。--jjamx は相方の盤の霧も抑制に効くが
       // 自分には見えない＝握り潰された交差を「クリア」と誤読する（負の情報の汚染）。
@@ -953,7 +970,7 @@ function playGame(board, cfg, rng) {
         me.lastRoll = roll;
         me.moved = true;
         // belief 更新は簡略化のため省略（詰みは稀なイベント）
-        placeDebris(pi, day);
+        if (!cfg.jpre) placeDebris(pi, day);
         continue;
       }
 
@@ -1071,8 +1088,8 @@ function playGame(board, cfg, rng) {
       }
       void prevLastPath;
 
-      // おじゃま係: シーカーが動いた後、その本人の盤にデブリを1個置く
-      placeDebris(pi, day);
+      // おじゃま係: シーカーが動いた後、その本人の盤にデブリを1個置く（--jpre 時は手番頭に前置済み）
+      if (!cfg.jpre) placeDebris(pi, day);
     }
   }
   return { met: false, day: null, crossCellsTotal, anyCross, stuck, minReach, firstClose2, firstClose4 };
@@ -1159,6 +1176,7 @@ function main() {
     else if (a.startsWith('--jjam=')) flags.jjam = +a.slice(7);
     else if (a.startsWith('--jjamx=')) flags.jjamx = +a.slice(8);
     else if (a === '--jfocus') flags.jfocus = true;
+    else if (a === '--jpre') flags.jpre = true;
     else if (a === '--jasym') flags.jasym = true;
     else if (a === '--jdump') flags.jdump = true;
     else if (a.startsWith('--aware=')) flags.aware = a.slice(8);
@@ -1195,11 +1213,12 @@ function main() {
         eps: flags.eps || 0,
         ojama: flags.ojama || 'none', jvariant: flags.jvariant || 'shared', jcap: flags.jcap, jinit: flags.jinit || 0,
         jjam: flags.jjam != null ? flags.jjam : null, jjamx: flags.jjamx != null ? flags.jjamx : null,
+        jpre: !!flags.jpre,
         jfocus: !!flags.jfocus, aware: flags.aware || null, sharedCross: !!flags.sharedCross,
         precross: !!flags.precross,
         pfocal: flags.pfocal || 'center', jasym: !!flags.jasym, jdump: !!flags.jdump,
       };
-      const jl = cfg.ojama !== 'none' ? ` 邪魔${cfg.ojama}-${cfg.jvariant}${cfg.jfocus ? '(集中)' : ''}${cfg.jcap != null ? `(上限${cfg.jcap})` : ''}${cfg.jinit ? `(布石${cfg.jinit}${cfg.jasym ? '非対称' : ''})` : ''}${cfg.jjam != null ? `(ジャム${cfg.jjam})` : ''}${cfg.jjamx != null ? `(秘匿ジャム${cfg.jjamx})` : ''}` : '';
+      const jl = cfg.ojama !== 'none' ? ` 邪魔${cfg.ojama}-${cfg.jvariant}${cfg.jfocus ? '(集中)' : ''}${cfg.jcap != null ? `(上限${cfg.jcap})` : ''}${cfg.jinit ? `(布石${cfg.jinit}${cfg.jasym ? '非対称' : ''})` : ''}${cfg.jjam != null ? `(ジャム${cfg.jjam})` : ''}${cfg.jjamx != null ? `(秘匿ジャム${cfg.jjamx})` : ''}${cfg.jpre ? '(前置)' : ''}` : '';
       const pl = cfg.pfocal && cfg.pfocal !== 'center' ? `[${cfg.pfocal}]` : '';
       const label = `${N}x${N} ${dice.label} ${maxDay}日 減衰${decay} ${policy}${pl}${cfg.aware ? `(認識${cfg.aware})` : ''}${cfg.eps ? `(ε=${cfg.eps})` : ''}${cfg.share ? '+出目' : ''}${cfg.precross ? '+先交差' : ''}${cfg.oppModel === 'greedy' ? ' oppV2' : ''}${jl}`;
       printResult(label, runCondition(cfg));
