@@ -22,6 +22,10 @@
  *              focalx=focalに「交差で相手を掴む」を足した強化案（実験9。私的情報で逆に悪化）
  *              xfocal=集合点を共有交差マスへ動かす（--sharedcross のときだけ機能。実験9）
  *   --sharedcross : 反実仮想。交差を両者に開示する（既定は横切った側だけ）。実験9の天井測定用
+ *   --precross : 交差の開示タイミングを反転する実験。既定は「自分が動く→動いた経路と相手の
+ *              直前軌跡の交差を知る」。--precross では「自分の直前の移動 ∩ 相手の直前の移動の
+ *              交差を、動く前に知る→それを使って動く」。手番冒頭に belief を更新してから着地を
+ *              選ぶので、交差を追いかけて動ける一方、当該手番の移動で新しい交差情報は生めない。
  *   --share  : 出目の相互開示 on
  *   --opp    : belief 更新に使う相手移動モデル random(v1) | greedy(v2)（省略時 random）
  *   --eps    : 確率εで無情報（ランダム）に動く。人間の不完全さのモデル（省略時 0）
@@ -42,7 +46,8 @@
  *              shared=両者共通の盤・両者に公開 / private=次に動く側だけに効き、相手には見えない
  *   --jfocus : private時、標的を交互でなく常に同じ片方に集中（見えない壁での隔離）
  *   --jcap   : デブリ総数の上限（省略時 実質無制限=毎移動1個）
- *   --jinit  : 開始前におじゃまが布石できるデブリ数（省略時 0）
+ *   --jinit  : 開始前の布石数。各盤の内側（外周を除く）に jinit 個ずつ置く（合計 2×jinit、
+ *              省略時 0）。N=0〜3 の難易度レバー。外周は詰み防止で禁止。
  *   --matrix : 第5節の実験マトリクス＋ε感度＋focal＋おじゃまを一括実行
  *
  * 例: node sim.js 10000 2d6 7 7 1 --policy=greedy --share
@@ -120,6 +125,14 @@ class Board {
     for (let a = 0; a < this.size; a++) {
       const r = (a / N) | 0, c = a % N;
       if (r === 0 || c === 0 || r === N - 1 || c === N - 1) this.perimeter.push(a);
+    }
+
+    // 内側マス（外周を除く）。布石は詰み防止のためここにしか置けない
+    this.interior = [];
+    this.interiorMask = new Uint8Array(this.size);
+    for (let a = 0; a < this.size; a++) {
+      const r = (a / N) | 0, c = a % N;
+      if (r > 0 && c > 0 && r < N - 1 && c < N - 1) { this.interior.push(a); this.interiorMask[a] = 1; }
     }
 
     // reach[p][k] = ちょうどk歩で到達できるマスの Int16Array
@@ -334,17 +347,19 @@ function cageAround(board, blocked, M, posA, posB, rng) {
 }
 
 // デブリ1個の配置先を決める。戻り値 { cell, target }（cell<0なら配置不能）
-function ojamaPlace(board, cfg, blocks, posA, posB, nextMover, rng, day) {
+function ojamaPlace(board, cfg, blocks, posA, posB, mover, rng, day) {
   const priv = cfg.jvariant === 'private';
-  // 秘匿型の標的: 通常は「次に動く側」に交互。--jfocus なら常に同じ片方へ集中し、
+  // 秘匿型の標的: 通常は「今動いた側」の盤に交互。--jfocus なら常に同じ片方へ集中し、
   // 片方だけを見えない壁で隔離する（もう片方の盤は綺麗なまま）
-  const target = priv ? (cfg.jfocus ? 0 : nextMover) : 0; // shared は blocks[0]===blocks[1]
+  const target = priv ? (cfg.jfocus ? 0 : mover) : 0; // shared は blocks[0]===blocks[1]
   const blockedArr = blocks[target];
   const from = priv ? (target === 0 ? posA : posB) : posA;
   const to = priv ? (target === 0 ? posB : posA) : posB;
   const c = (board.N - 1) >> 1, center = c * board.N + c;
   let cell = -1;
   if (cfg.ojama === 'cage') cell = cageCell(board, blockedArr, posA, posB, rng);
+  // afocal: 位置から予測した focal 点 F を、盤ごとに逆側から潰す賢いキング（実験11）
+  else if (cfg.ojama === 'afocal') cell = afocalCell(board, blockedArr, posA, posB, target, false);
   // 読み合い用のおじゃま:
   //   cagecenter=中心だけを毒す素朴読み（プレイヤーが中心に来ると決めつける）
   //   predict   =プレイヤーの集合戦略 pfocal を読み、その日の集合点を先回りで毒す（強い読み）
@@ -356,7 +371,7 @@ function ojamaPlace(board, cfg, blocks, posA, posB, nextMover, rng, day) {
     cell = cageAround(board, blockedArr, menu[(day || 1) % menu.length], posA, posB, rng);
   }
   if (cfg.ojama === 'choke' || ((cfg.ojama === 'cage' || cfg.ojama === 'predict' ||
-      cfg.ojama === 'cagecenter' || cfg.ojama === 'spread') && cell < 0)) {
+      cfg.ojama === 'cagecenter' || cfg.ojama === 'spread' || cfg.ojama === 'afocal') && cell < 0)) {
     cell = chokeCell(board, blockedArr, from, to, rng);
   }
   if (cell < 0) {
@@ -368,6 +383,89 @@ function ojamaPlace(board, cfg, blocks, posA, posB, nextMover, rng, day) {
     if (legal.length) cell = legal[(rng() * legal.length) | 0];
   }
   return { cell, target };
+}
+
+// 布石（開始前配置）の1個ぶんの配置先を、指定した盤(target)の「内側マス」から選ぶ。
+// 外周には置かない（詰み防止）。おじゃまの方策が選んだマスが外周/不正なら、それに最も近い
+// 内側の空きマスへ寄せる。方策が候補を出せなければ内側からランダムに置く。
+function ojamaOpeningPlace(board, cfg, blockedArr, posA, posB, target, rng) {
+  const from = target === 0 ? posA : posB;
+  const to = target === 0 ? posB : posA;
+  const c = (board.N - 1) >> 1, center = c * board.N + c;
+  let pref = -1;
+  if (cfg.ojama === 'cage') pref = cageCell(board, blockedArr, posA, posB, rng);
+  else if (cfg.ojama === 'cagecenter') pref = cageAround(board, blockedArr, center, posA, posB, rng);
+  else if (cfg.ojama === 'predict') pref = cageAround(board, blockedArr, focalGoal(board, cfg, 1), posA, posB, rng);
+  else if (cfg.ojama === 'spread') {
+    const menu = landmarkMenu(board);
+    pref = cageAround(board, blockedArr, menu[1 % menu.length], posA, posB, rng);
+  }
+  if (cfg.ojama === 'choke' || pref < 0) pref = chokeCell(board, blockedArr, from, to, rng);
+  // 内側に限定。pref が内側の空きならそれを使い、そうでなければ最寄りの内側空きマスへ寄せる。
+  const ok = (q) => board.interiorMask[q] && !blockedArr[q] && q !== posA && q !== posB;
+  if (pref >= 0 && ok(pref)) return pref;
+  let best = -1, bd = Infinity;
+  for (const q of board.interior) {
+    if (!ok(q)) continue;
+    const d = (pref >= 0 ? board.d(q, pref) : 0) + rng() * 1e-3;
+    if (d < bd) { bd = d; best = q; }
+  }
+  return best;
+}
+
+// 非対称布石（--jasym・実験用）: 盤ごとに「中心に近い順」で内側マスを塞ぐが、
+// 距離が同じマスのタイブレークを盤で逆にする（盤0は index 昇順=上・左を先に、
+// 盤1は index 降順=下・右を先に）。これで focal の決定的な再設定
+// 「中心が塞がれたら中心に最も近い空きマスへ」が二人で食い違い、
+// 別々の代替焦点を選んで会えなくなる。ミラー布石の弱さを潰す狙い。
+function ojamaAsymOpening(board, blockedArr, target, posA, posB) {
+  const N = board.N, c = (N - 1) >> 1, center = c * N + c;
+  let best = -1, bd = Infinity, bi = target === 0 ? Infinity : -Infinity;
+  for (const q of board.interior) {
+    if (blockedArr[q] || q === posA || q === posB) continue;
+    const d = board.d(q, center);
+    if (d < bd || (d === bd && (target === 0 ? q < bi : q > bi))) {
+      bd = d; bi = q; best = q;
+    }
+  }
+  return best;
+}
+
+/* ===================== afocal: focal点を"位置から"予測して非対称に潰す賢いキング =====================
+ * 設計上の肝（循環回避）: シーカーの focal は「盤中心＝位置に依存しない固定焦点」。
+ * キングはその目標関数（focalGoal）を一切呼ばず、"観測できる二人の位置"だけから
+ * 合流予測点 F を独立に推定する（全知キングが正当に持つ情報）。両者への距離和が最小の
+ * 内側マス、タイブレークは中心寄り。→ 序盤（二人が離れている）は F が中心からずれ、
+ * 収束につれ F→中心に一致していく。アルゴリズムが別物なので"当たり外れ"のある本物の予測。
+ */
+function predictFocal(board, posA, posB) {
+  const N = board.N, c = (N - 1) >> 1, center = c * N + c;
+  let F = -1, bs = Infinity;
+  for (const q of board.interior) {
+    const s = (board.d(q, posA) + board.d(q, posB)) * 10 + board.d(q, center);
+    if (s < bs) { bs = s; F = q; }
+  }
+  return F;
+}
+
+// 予測点 F の近傍（距離≤2）を、盤ごとに"逆側"から毒す。F 自体を最優先で塞ぎ、
+// 同距離のマスは盤0=低index側（上・左）、盤1=高index側（下・右）を先に選ぶ。
+// → 二人の「Fに最も近い空きマス」が食い違い、別々の代替焦点へ向かって会えなくなる。
+// interiorOnly=true は布石用（外周禁止）。毎手番は外周も可。
+function afocalCell(board, blockedArr, posA, posB, target, interiorOnly) {
+  const F = predictFocal(board, posA, posB);
+  if (F < 0) return -1;
+  let best = -1, bScore = Infinity;
+  for (let q = 0; q < board.size; q++) {
+    if (blockedArr[q] || q === posA || q === posB) continue;
+    if (interiorOnly && !board.interiorMask[q]) continue;
+    const dF = board.d(q, F);
+    if (dF > 2) continue;
+    const sideKey = target === 0 ? q : (board.size - 1 - q); // 盤で優先する側を反転
+    const score = dF * 10000 + sideKey; // 主: F近傍優先, 副: 盤ごとの側
+    if (score < bScore) { bScore = score; best = q; }
+  }
+  return best;
 }
 
 // 相手の盤に置かれたであろう k 個のデブリを、おじゃまの方策から静的に推定する
@@ -701,9 +799,38 @@ function playGame(board, cfg, rng) {
     const { cell, target } = ojamaPlace(board, cfg, blocks, players[0].pos, players[1].pos, nextMover, rng, curDay);
     if (cell >= 0) { blocks[target][cell] = 1; debrisCount++; debrisPer[target]++; }
   };
-  // 事前配置: 全知おじゃまは開始位置を見てから、1日目の前にデブリを布石できる
+  // 事前配置（布石）: 全知おじゃまは開始位置を見てから、1日目の前にデブリを置ける。
+  // ルール: 各盤の「内側（外周を除く）」に jinit 個ずつ（合計 2×jinit）。外周は詰み防止で禁止。
+  // 秘匿型は各自の盤に jinit 個。共有型は同一盤なので合計 2×jinit を1枚に置く。
   if (jOn && cfg.jinit) {
-    for (let i = 0; i < cfg.jinit; i++) placeDebris(i & 1, 1);
+    const targets = cfg.jvariant === 'private' ? [0, 1] : [0, 0];
+    for (const t of targets) {
+      for (let i = 0; i < cfg.jinit; i++) {
+        if (debrisCount >= jcap) break;
+        const arr = blocks[t];
+        let cell = cfg.ojama === 'afocal'
+          ? afocalCell(board, arr, players[0].pos, players[1].pos, t, true)
+          : cfg.jasym
+            ? ojamaAsymOpening(board, arr, t, players[0].pos, players[1].pos)
+            : ojamaOpeningPlace(board, cfg, arr, players[0].pos, players[1].pos, t, rng);
+        if (cell < 0 && cfg.ojama === 'afocal') // F近傍が埋まったら通常の内側配置へ退避
+          cell = ojamaOpeningPlace(board, cfg, arr, players[0].pos, players[1].pos, t, rng);
+        if (cell >= 0) { arr[cell] = 1; debrisCount++; debrisPer[t]++; }
+      }
+    }
+  }
+
+  // 診断（--jdump）: 最初の1ゲームだけ、両盤の布石の位置と非対称性を出力
+  if (cfg.jdump && !cfg._dumped && jOn && cfg.jvariant === 'private') {
+    cfg._dumped = true;
+    const cellsOf = (arr) => { const s = []; for (let q = 0; q < size; q++) if (arr[q]) s.push(`(${(q / board.N) | 0},${q % board.N})`); return s; };
+    const set0 = new Set(); for (let q = 0; q < size; q++) if (blocks[0][q]) set0.add(q);
+    let overlap = 0; for (let q = 0; q < size; q++) if (blocks[0][q] && blocks[1][q]) overlap++;
+    const cc2 = (board.N - 1) >> 1;
+    console.log(`  [jdump] 中心=(${cc2},${cc2}) start A=(${(a / board.N) | 0},${a % board.N}) B=(${(b / board.N) | 0},${b % board.N})`);
+    console.log(`  [jdump] 盤0の布石: ${cellsOf(blocks[0]).join(' ')}`);
+    console.log(`  [jdump] 盤1の布石: ${cellsOf(blocks[1]).join(' ')}`);
+    console.log(`  [jdump] 一致マス数=${overlap} / 各盤${cfg.jinit}個  → 非対称なら一致は少ないほど良い`);
   }
 
   let turn = 0, crossCellsTotal = 0, anyCross = false, stuck = 0;
@@ -735,6 +862,24 @@ function playGame(board, cfg, rng) {
         ? samplePathBlocked(board, layers, L, roll, rng)
         : samplePath(board, me.pos, L, roll, rng));
 
+      // precross: 「自分の直前の移動 ∩ 相手の直前の移動」の交差を、動く前に知る。
+      // 手番冒頭で belief を更新してから着地を選ぶ（既定の post-move 交差は下でスキップ）。
+      if (cfg.precross && policy !== 'random' && me.moved && op.moved) {
+        const opSet = new Set(op.lastPathCells);
+        const preCross = [];
+        for (const x of me.lastPathCells) if (opSet.has(x)) preCross.push(x);
+        const uniqPre = [...new Set(preCross)];
+        const preClear = [...new Set(me.lastPathCells)]; // 自分の直前経路で交差しなかったマス＝相手は通っていない
+        const opBlocksKnown = (cfg.aware === 'dist' && jOn && cfg.jvariant !== 'private' && debrisCount > 0)
+          ? blocks[1 - pi] : null;
+        observeBelief(
+          board, me.belief, uniqPre, preClear,
+          share ? op.lastRoll : null, op.moved, opBlocksKnown
+        );
+        me.belief[me.pos] = 0;
+        normalize(me.belief);
+      }
+
       // 詰み: ちょうどの歩数で止まれるマスがない → その場に留まる
       if (reach.length === 0) {
         stuck++;
@@ -743,7 +888,7 @@ function playGame(board, cfg, rng) {
         me.lastRoll = roll;
         me.moved = true;
         // belief 更新は簡略化のため省略（詰みは稀なイベント）
-        placeDebris(1 - pi, day);
+        placeDebris(pi, day);
         continue;
       }
 
@@ -801,16 +946,19 @@ function playGame(board, cfg, rng) {
         //     交差あり → 相手の経路が crosses を通った。
         //     交差なし → 自分が踏んだマスは相手の直近経路に含まれない（負の情報）。
         //     着地マスに相手はいない（勝利していないので）。
-        const myClear = [...new Set(segment)]; // 交差マス以外の踏破マスは相手経路に含まれない
-        // 認識AI('dist')＋共有型: 相手も同じ壁を通れないので、交差からの尤度をBFS距離で締める
-        const opBlocksKnown = (cfg.aware === 'dist' && jOn && cfg.jvariant !== 'private' && debrisCount > 0)
-          ? blocks[1 - pi] : null;
-        observeBelief(
-          board, me.belief, uniqCross, myClear,
-          share ? op.lastRoll : null, op.moved, opBlocksKnown
-        );
-        me.belief[me.pos] = 0;
-        normalize(me.belief);
+        //     ※ --precross のときは手番冒頭で更新済みなので post-move の更新はスキップする。
+        if (!cfg.precross) {
+          const myClear = [...new Set(segment)]; // 交差マス以外の踏破マスは相手経路に含まれない
+          // 認識AI('dist')＋共有型: 相手も同じ壁を通れないので、交差からの尤度をBFS距離で締める
+          const opBlocksKnown = (cfg.aware === 'dist' && jOn && cfg.jvariant !== 'private' && debrisCount > 0)
+            ? blocks[1 - pi] : null;
+          observeBelief(
+            board, me.belief, uniqCross, myClear,
+            share ? op.lastRoll : null, op.moved, opBlocksKnown
+          );
+          me.belief[me.pos] = 0;
+          normalize(me.belief);
+        }
 
         // (2) 相手側（op）：交差は伝えられない。分かるのは「me が1手番動いた」ことと、
         //     出目開示ありならその出目だけ。前方伝播と「未出会い」除外のみ。
@@ -854,8 +1002,8 @@ function playGame(board, cfg, rng) {
       }
       void prevLastPath;
 
-      // おじゃま係: 移動が終わるたびにデブリを1個置く
-      placeDebris(1 - pi, day);
+      // おじゃま係: シーカーが動いた後、その本人の盤にデブリを1個置く
+      placeDebris(pi, day);
     }
   }
   return { met: false, day: null, crossCellsTotal, anyCross, stuck, minReach, firstClose2, firstClose4 };
@@ -940,9 +1088,12 @@ function main() {
     else if (a.startsWith('--jcap=')) flags.jcap = +a.slice(7);
     else if (a.startsWith('--jinit=')) flags.jinit = +a.slice(8);
     else if (a === '--jfocus') flags.jfocus = true;
+    else if (a === '--jasym') flags.jasym = true;
+    else if (a === '--jdump') flags.jdump = true;
     else if (a.startsWith('--aware=')) flags.aware = a.slice(8);
     else if (a === '--aware') flags.aware = 'dist';
     else if (a === '--sharedcross') flags.sharedCross = true;
+    else if (a === '--precross') flags.precross = true;
     else if (a.startsWith('--pfocal=')) flags.pfocal = a.slice(9);
     else pos.push(a);
   }
@@ -973,11 +1124,12 @@ function main() {
         eps: flags.eps || 0,
         ojama: flags.ojama || 'none', jvariant: flags.jvariant || 'shared', jcap: flags.jcap, jinit: flags.jinit || 0,
         jfocus: !!flags.jfocus, aware: flags.aware || null, sharedCross: !!flags.sharedCross,
-        pfocal: flags.pfocal || 'center',
+        precross: !!flags.precross,
+        pfocal: flags.pfocal || 'center', jasym: !!flags.jasym, jdump: !!flags.jdump,
       };
-      const jl = cfg.ojama !== 'none' ? ` 邪魔${cfg.ojama}-${cfg.jvariant}${cfg.jfocus ? '(集中)' : ''}${cfg.jcap != null ? `(上限${cfg.jcap})` : ''}${cfg.jinit ? `(布石${cfg.jinit})` : ''}` : '';
+      const jl = cfg.ojama !== 'none' ? ` 邪魔${cfg.ojama}-${cfg.jvariant}${cfg.jfocus ? '(集中)' : ''}${cfg.jcap != null ? `(上限${cfg.jcap})` : ''}${cfg.jinit ? `(布石${cfg.jinit}${cfg.jasym ? '非対称' : ''})` : ''}` : '';
       const pl = cfg.pfocal && cfg.pfocal !== 'center' ? `[${cfg.pfocal}]` : '';
-      const label = `${N}x${N} ${dice.label} ${maxDay}日 減衰${decay} ${policy}${pl}${cfg.aware ? `(認識${cfg.aware})` : ''}${cfg.eps ? `(ε=${cfg.eps})` : ''}${cfg.share ? '+出目' : ''}${cfg.oppModel === 'greedy' ? ' oppV2' : ''}${jl}`;
+      const label = `${N}x${N} ${dice.label} ${maxDay}日 減衰${decay} ${policy}${pl}${cfg.aware ? `(認識${cfg.aware})` : ''}${cfg.eps ? `(ε=${cfg.eps})` : ''}${cfg.share ? '+出目' : ''}${cfg.precross ? '+先交差' : ''}${cfg.oppModel === 'greedy' ? ' oppV2' : ''}${jl}`;
       printResult(label, runCondition(cfg));
     }
   }

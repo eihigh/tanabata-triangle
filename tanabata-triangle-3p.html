@@ -49,8 +49,9 @@
   .role-card{margin-bottom:12px;}
   .role-head{display:flex;align-items:center;gap:8px;margin-bottom:7px;font-weight:700;font-size:1rem;}
   .role-dot{width:14px;height:14px;border-radius:50%;flex-shrink:0;}
-  .role-dot.orihime{background:var(--orihime);box-shadow:0 0 10px var(--orihime);}
-  .role-dot.hikoboshi{background:var(--hikoboshi);box-shadow:0 0 10px var(--hikoboshi);}
+  .role-dot.orihime,.role-dot.hikoboshi{background:none;box-shadow:none;width:auto;height:auto;font-size:1rem;line-height:1;}
+  .role-dot.orihime::before{content:"👘";}
+  .role-dot.hikoboshi::before{content:"🐂";}
   .role-dot.ojama{background:var(--ojama);box-shadow:0 0 10px var(--ojama);}
   .opts{display:flex;flex-wrap:wrap;gap:6px;}
   .opt{font-size:.78rem;padding:7px 11px;border-radius:8px;border:1px solid rgba(160,180,255,.3);
@@ -84,8 +85,16 @@
   .news b.roll{color:var(--gold);font-size:1.05em;} .news .cm{color:var(--sakura);}
   #board{display:grid;gap:4px;grid-template-columns:repeat(7,1fr);margin:0 auto 12px;width:100%;aspect-ratio:1;
     padding:10px;background:rgba(6,10,34,.85);border:1px solid rgba(160,180,255,.22);border-radius:14px;}
+  .board{display:grid;gap:3px;grid-template-columns:repeat(7,1fr);margin:0 auto;width:100%;aspect-ratio:1;
+    padding:7px;background:rgba(6,10,34,.85);border:1px solid rgba(160,180,255,.22);border-radius:12px;}
+  .dual-board{display:flex;gap:10px;margin-bottom:12px;}
+  .dual-board .board-col{flex:1;min-width:0;}
+  .board-label{text-align:center;font-size:.76rem;font-weight:700;margin-bottom:6px;letter-spacing:.04em;}
+  .board-label.orihime{color:var(--orihime);}
+  .board-label.hikoboshi{color:var(--hikoboshi);}
+  .board-col.active .board{box-shadow:0 0 0 2px var(--ojama),0 0 16px rgba(199,125,255,.45);}
   .cell{position:relative;border-radius:7px;background:rgba(120,140,220,.08);border:1px solid rgba(140,160,230,.10);
-    display:flex;align-items:center;justify-content:center;font-size:clamp(11px,3.2vw,18px);
+    display:flex;align-items:center;justify-content:center;font-size:clamp(11px,3.2vw,18px);aspect-ratio:1;
     transition:background .15s,box-shadow .15s;user-select:none;}
   .cell.trail{background:rgba(140,160,230,.16);}
   .cell.trail0{box-shadow:inset 0 0 0 1px rgba(125,232,216,.25);}
@@ -95,14 +104,10 @@
   .cell.newcross::after{animation:pop .6s ease;}
   @keyframes pop{0%{transform:scale(0);}60%{transform:scale(1.6);}100%{transform:scale(1);}}
   .cell.debris{background:repeating-linear-gradient(45deg,#3a2233,#3a2233 4px,#2a1826 4px,#2a1826 8px);border-color:#5a2a4a;}
-  .cell.debris::before{content:"✕";color:#e08ab0;font-weight:700;opacity:.8;}
-  .cell.d0::after{content:"◤";position:absolute;left:2px;top:0;font-size:9px;color:var(--orihime);}
-  .cell.d1::after{content:"◢";position:absolute;right:2px;bottom:0;font-size:9px;color:var(--hikoboshi);}
-  .cell.me::before{content:"";position:absolute;inset:18%;border-radius:50%;}
-  .cell.me.orihime::before{background:radial-gradient(circle,#d8fff7 15%,var(--orihime) 60%,transparent 75%);box-shadow:0 0 14px var(--orihime);}
-  .cell.me.hikoboshi::before{background:radial-gradient(circle,#ffe9d2 15%,var(--hikoboshi) 60%,transparent 75%);box-shadow:0 0 14px var(--hikoboshi);}
-  .cell.p0::before{content:"";position:absolute;inset:22%;border-radius:50%;background:radial-gradient(circle,#d8fff7 15%,var(--orihime) 60%,transparent 78%);box-shadow:0 0 12px var(--orihime);}
-  .cell.p1::before{content:"";position:absolute;inset:22%;border-radius:50%;background:radial-gradient(circle,#ffe9d2 15%,var(--hikoboshi) 60%,transparent 78%);box-shadow:0 0 12px var(--hikoboshi);}
+  .cell.debris::before{content:"🪨";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:clamp(16px,5vw,26px);line-height:1;opacity:.95;}
+  .cell.me::before,.cell.p0::before,.cell.p1::before{content:"";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:clamp(15px,4.6vw,24px);line-height:1;}
+  .cell.me.orihime::before,.cell.p0::before{content:"👘";}
+  .cell.me.hikoboshi::before,.cell.p1::before{content:"🐂";}
   .cell.reach{cursor:pointer;background:rgba(245,215,110,.13);border-color:rgba(245,215,110,.45);}
   .cell.reach:hover{background:rgba(245,215,110,.3);}
   .cell.sel{background:rgba(245,215,110,.42);box-shadow:0 0 12px rgba(245,215,110,.6);}
@@ -145,15 +150,15 @@
     <p class="subtitle">— 三人の夜、天の川の読み合い —</p>
     <div class="panel">
       <div class="role-card">
-        <div class="role-head"><span class="role-dot orihime"></span>織姫（探す側）</div>
+        <div class="role-head"><span class="role-dot orihime"></span>シーカー（織姫）</div>
         <div class="opts" id="opts-orihime"></div>
       </div>
       <div class="role-card">
-        <div class="role-head"><span class="role-dot hikoboshi"></span>彦星（探す側）</div>
+        <div class="role-head"><span class="role-dot hikoboshi"></span>シーカー（彦星）</div>
         <div class="opts" id="opts-hikoboshi"></div>
       </div>
       <div class="role-card" style="margin-bottom:0;">
-        <div class="role-head"><span class="role-dot ojama"></span>おじゃま（妨げる側・全知）</div>
+        <div class="role-head"><span class="role-dot ojama"></span>キング（妨げる側）</div>
         <div class="opts" id="opts-ojama"></div>
       </div>
     </div>
@@ -164,12 +169,27 @@
       </div>
     </div>
     <div class="panel">
+      <div class="role-card" style="margin-bottom:0;">
+        <div class="role-head"><span class="role-dot ojama"></span>キングの布石（難易度）</div>
+        <div class="note" style="margin:2px 0 8px;">シーカーが動き出す前に、キングが各盤の内側へN個ずつデブリを置く。多いほど難しい。</div>
+        <div class="opts" id="opts-jinit"></div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="role-card" style="margin-bottom:0;">
+        <div class="role-head"><span class="role-dot ojama"></span>日数制限（難易度）</div>
+        <div class="note" style="margin:2px 0 8px;">何日以内に会えればシーカーの勝ち。短いほど難しい。</div>
+        <div class="opts" id="opts-diff"></div>
+      </div>
+    </div>
+    <div class="panel">
       <h2>ルール</h2>
       <ul>
-        <li>織姫と彦星は互いの位置が見えない。7×7・サイコロ2個の合計ちょうどで移動。</li>
-        <li>自分が動いた道が相手の<b>直前の道</b>と重なると、その交差マス✦が<b>自分だけ</b>に見える。</li>
-        <li>おじゃまは全知。各手番、次に動く側の盤に<b>デブリ</b>（通れないマス）を1つ置く。デブリは<b>置かれた本人にしか見えない</b>。</li>
-        <li>7日以内に二人が<b>同じマス</b>に立てば探す側の勝ち。会えなければおじゃまの勝ち。</li>
+        <li>二人のシーカーは互いの位置が見えない。7×7・サイコロ2個の合計ちょうどで移動。</li>
+        <li>手番の頭で、<b>自分の直前の道</b>と<b>相手の直前の道</b>が重なった交差マス✦が<b>自分だけ</b>に見える。それを見てから動く。</li>
+        <li>ゲーム開始前、キングは<b>布石</b>として各盤の<b>内側（外周を除く）</b>にN個ずつデブリを置ける（計2N個・N=0～3の難易度）。</li>
+        <li>キングは二人の位置を見渡せる。各手番、シーカーが動いた後、その盤に<b>デブリ</b>（通れないマス）を1つ置く。デブリは<b>置かれた本人にしか見えない</b>。</li>
+        <li>日数制限（normal 7日／hard 3日）以内に二人が<b>同じマス</b>に立てば探す側の勝ち。会えなければキングの勝ち。</li>
       </ul>
     </div>
     <button id="btn-start">ゲームを始める</button>
@@ -201,12 +221,12 @@
 
   <!-- おじゃま手番 -->
   <div class="screen" id="screen-ojama">
-    <div class="turn-head"><span class="turn-day" id="o-day"></span><span class="turn-player ojama">おじゃま（全知）</span></div>
+    <div class="turn-head"><span class="turn-day" id="o-day"></span><span class="turn-player ojama">キング</span></div>
     <div class="ojama-info" id="o-info"></div>
     <div class="legend">
-      <span><span class="lg" style="background:var(--orihime)"></span>織姫</span>
-      <span><span class="lg" style="background:var(--hikoboshi)"></span>彦星</span>
-      <span>◤=織姫の盤のデブリ ◢=彦星の盤のデブリ</span>
+      <span>👘 シーカー（織姫）</span>
+      <span>🐂 シーカー（彦星）</span>
+      <span>🪨=各盤のデブリ</span>
     </div>
     <div id="board-ojama"></div>
     <div class="prompt" id="o-prompt"></div>
@@ -238,12 +258,13 @@
 <script>
 'use strict';
 /* ===== 定数 ===== */
-const N=7, SZ=N*N, MAX_DAY=7, NDICE=2, FACES=6, DECAY=1;
+const N=7, SZ=N*N, NDICE=2, FACES=6, DECAY=1;
+let MAX_DAY=7; // 難易度で変化（normal=7日 / hard=3日）
 const CENTER=((N-1>>1))*N+((N-1)>>1);
 const NEG=-1e9;
 const AI_THINK=320, AI_POST=380; // AI手番の演出ディレイ(ms)
 const ROLES=['orihime','hikoboshi','ojama'];
-const RNAME={orihime:'織姫',hikoboshi:'彦星',ojama:'おじゃま'};
+const RNAME={orihime:'シーカー（織姫）',hikoboshi:'シーカー（彦星）',ojama:'キング'};
 /* AIの種類 */
 const SEEKER_AIS=[
   {id:'human',label:'人間',tag:'あなたが操作'},
@@ -254,9 +275,22 @@ const SEEKER_AIS=[
 ];
 const OJAMA_AIS=[
   {id:'human',label:'人間',tag:'あなたが操作'},
+  {id:'afocal',label:'AI焦点破り',tag:'合流点を左右非対称に潰す'},
   {id:'chase',label:'AI追尾',tag:'合流点を毒す'},
   {id:'wall',label:'AI封鎖',tag:'間に壁を築く'},
   {id:'random',label:'AIランダム',tag:'でたらめ'},
+];
+/* 布石（開始前のデブリ）の難易度レバー：各盤にN個ずつ・計2N個 */
+const JINIT_OPTS=[
+  {id:0,label:'なし',tag:'布石0（易しい）'},
+  {id:1,label:'1個ずつ',tag:'各盤に1／計2'},
+  {id:2,label:'2個ずつ',tag:'各盤に2／計4'},
+  {id:3,label:'3個ずつ',tag:'各盤に3／計6（難しい）'},
+];
+/* 難易度（日数制限）：normal=7日 / hard=3日。先交差は日数が最も効くレバーなので、難度は日数で作る。 */
+const DIFF_OPTS=[
+  {id:7,label:'normal',tag:'7日制限（標準）'},
+  {id:3,label:'hard',tag:'3日制限（上級）'},
 ];
 /* 集合点メニュー（中心＋4象限） */
 const RQ=Math.max(1,Math.round(N/4));
@@ -271,6 +305,9 @@ const NB=[];
 for(let a=0;a<SZ;a++){const[r,c]=rc(a),l=[];if(r>0)l.push(a-N);if(r<N-1)l.push(a+N);if(c>0)l.push(a-1);if(c<N-1)l.push(a+1);NB.push(l);}
 const PERIM=[];
 for(let a=0;a<SZ;a++){const[r,c]=rc(a);if(r===0||c===0||r===N-1||c===N-1)PERIM.push(a);}
+/* 内側マス（外周を除く）― 布石の配置可能範囲。外周に置くとシーカーを詰ませてしまうので除外 */
+const INTERIOR=[];
+for(let a=0;a<SZ;a++){const[r,c]=rc(a);if(r>0&&c>0&&r<N-1&&c<N-1)INTERIOR.push(a);}
 
 function computeLayers(start,k,blocked){
   const layers=[new Set([start])];
@@ -300,10 +337,24 @@ function makeBelief(myStart){
   for(let i=0;i<SZ;i++)b[i]/=n;return b;
 }
 function normalize(b){let s=0;for(let i=0;i<SZ;i++)s+=b[i];if(s>1e-12){for(let i=0;i<SZ;i++)b[i]/=s;return true;}return false;}
-function diffuse(b){
-  const nb=new Float64Array(SZ);
-  for(let q=0;q<SZ;q++){if(b[q]<=0)continue;nb[q]+=b[q]*0.45;const ns=NB[q];for(const m of ns)nb[m]+=b[q]*0.55/ns.length;}
-  return nb;
+/* ダイス合計の確率（index=合計値）。相手の1手番移動をこの分布で前方伝播する */
+const DICE_PROBS=(function(){let d=[1];for(let k=0;k<NDICE;k++){const nd=new Array(d.length+FACES).fill(0);for(let s=0;s<d.length;s++){if(!d[s])continue;for(let v=1;v<=FACES;v++)nd[s+v]+=d[s]/FACES;}d=nd;}return d;})();
+const MINROLL=NDICE, MAXROLL=NDICE*FACES;
+/* ちょうど k 歩で到達できるマス（障害物なし4近傍：マンハッタン距離 d<=k かつ (k-d) が偶数）。相手の私的デブリは不可視なので開盤で近似（sim の belief 伝播と同じ） */
+const _reachCache=new Map();
+function reachExact(p,k){
+  const key=p*32+k;let r=_reachCache.get(key);if(r)return r;
+  r=[];for(let q=0;q<SZ;q++){const d=dist(p,q);if(d<=k&&((k-d)&1)===0)r.push(q);}
+  _reachCache.set(key,r);return r;
+}
+/* 相手が1手番（合計 roll 歩、既知なら roll・不明なら 2d6 混合）動いた belief を前方伝播 */
+function propagate(b,roll){
+  const out=new Float64Array(SZ);
+  for(let p=0;p<SZ;p++){const w=b[p];if(w<=0)continue;
+    if(roll!=null){const r=reachExact(p,roll);const add=w/r.length;for(const q of r)out[q]+=add;}
+    else{for(let s=MINROLL;s<=MAXROLL;s++){const ps=DICE_PROBS[s];if(!ps)continue;const r=reachExact(p,s);const add=w*ps/r.length;for(const q of r)out[q]+=add;}}
+  }
+  return out;
 }
 function observeCross(b,crossCells,R){
   if(crossCells.length===0)return;
@@ -318,9 +369,10 @@ function expectedDist(b,L){let e=0;for(let q=0;q<SZ;q++)if(b[q]>1e-15)e+=b[q]*di
 
 /* ===== ゲーム状態 ===== */
 let G=null;
-const STEPS=[{kind:'seeker',idx:0},{kind:'ojama',target:1},{kind:'seeker',idx:1},{kind:'ojama',target:0}];
+const STEPS=[{kind:'seeker',idx:0},{kind:'ojama',target:0},{kind:'seeker',idx:1},{kind:'ojama',target:1}];
 
 function newGame(cfg){
+  MAX_DAY=cfg.maxDay||7;
   const minD=Math.max(4,Math.round(N*1.1));
   const per=PERIM;let a=per[(Math.random()*per.length)|0],b;
   do{b=per[(Math.random()*per.length)|0];}while(dist(a,b)<minD);
@@ -334,11 +386,13 @@ function newGame(cfg){
     knownCross:[new Set(),new Set()],
     debris:[new Uint8Array(SZ),new Uint8Array(SZ)],
     belief:[makeBelief(a),makeBelief(b)],
-    lastCross:[], news:[null,null],
+    lastCross:[], preCross:[], news:[null,null],
     // シーカー手番の一時状態
     roll:null, dice:null, reach:[], layers:null, sel:null, selPath:null,
     // おじゃま一時
-    oTarget:0, oSel:null,
+    oTarget:0, oSel:null, oMode:'place',
+    // 布石（開始前のデブリ配置）の残数
+    opening:{remaining:[cfg.jinit|0,cfg.jinit|0]},
     over:false,
   };
   window.G=G; // デバッグ用
@@ -352,7 +406,7 @@ function aiType(role){return G.cfg.roles[role];}
 function isHuman(role){return G.cfg.roles[role]==='human';}
 
 /* ===== 設定画面 ===== */
-const selection={orihime:'human',hikoboshi:'greedy',ojama:'chase'};
+const selection={orihime:'human',hikoboshi:'greedy',ojama:'afocal',jinit:2,maxDay:7};
 function buildOpts(role,list){
   const holder=$('opts-'+role);holder.innerHTML='';
   for(const o of list){
@@ -363,13 +417,80 @@ function buildOpts(role,list){
     holder.appendChild(d);
   }
 }
-buildOpts('orihime',SEEKER_AIS);buildOpts('hikoboshi',SEEKER_AIS);buildOpts('ojama',OJAMA_AIS);
+function buildJinit(){
+  const holder=$('opts-jinit');holder.innerHTML='';
+  for(const o of JINIT_OPTS){
+    const d=document.createElement('div');
+    d.className='opt'+(selection.jinit===o.id?' sel':'');
+    d.innerHTML=`${o.label}<span class="tag">${o.tag}</span>`;
+    d.onclick=()=>{selection.jinit=o.id;buildJinit();};
+    holder.appendChild(d);
+  }
+}
+function buildDiff(){
+  const holder=$('opts-diff');holder.innerHTML='';
+  for(const o of DIFF_OPTS){
+    const d=document.createElement('div');
+    d.className='opt'+(selection.maxDay===o.id?' sel':'');
+    d.innerHTML=`${o.label}<span class="tag">${o.tag}</span>`;
+    d.onclick=()=>{selection.maxDay=o.id;buildDiff();};
+    holder.appendChild(d);
+  }
+}
+buildOpts('orihime',SEEKER_AIS);buildOpts('hikoboshi',SEEKER_AIS);buildOpts('ojama',OJAMA_AIS);buildJinit();buildDiff();
 
 $('btn-start').onclick=()=>{
-  newGame({roles:{...selection},share:$('opt-share').checked});
-  runCurrent();
+  newGame({roles:{...selection},share:$('opt-share').checked,jinit:selection.jinit,maxDay:selection.maxDay});
+  beginGame();
 };
 $('btn-again').onclick=()=>show('screen-setup');
+
+/* ===== 布石（開始前のデブリ配置） ===== */
+function beginGame(){
+  if(G.cfg.jinit>0){G.opening={remaining:[G.cfg.jinit,G.cfg.jinit]};runOpening();}
+  else runCurrent();
+}
+function runOpening(){
+  if(isHuman('ojama'))showHandoff('ojama',{kind:'opening'});
+  else runOpeningAI();
+}
+// 布石の合法マス＝内側（外周を除く）のうちデブリ未設置のマス
+function legalOpeningCells(target){
+  const deb=G.debris[target],out=[];
+  for(const c of INTERIOR)if(!deb[c])out.push(c);
+  return out;
+}
+function openOpening(){
+  G.oMode='opening';
+  G.oTarget=G.opening.remaining[0]>0?0:1;
+  G.oSel=null;
+  $('o-day').textContent='布石';
+  const tn=G.oTarget===0?'シーカー（織姫）':'シーカー（彦星）';
+  const rem=G.opening.remaining[G.oTarget];
+  $('o-info').innerHTML=`開始前の布石　残り <b>${G.opening.remaining[0]+G.opening.remaining[1]}</b> 個`;
+  $('o-prompt').innerHTML=`<span class="em">${tn}</span> の盤の<b>内側</b>に布石を置く（あと ${rem} 個）。外周には置けません。`;
+  $('o-confirm').disabled=true;
+  $('o-confirm').textContent='ここに布石を置く';
+  renderBoardOjama();show('screen-ojama');
+}
+function runOpeningAI(){
+  show('screen-ai');
+  $('ai-emoji').textContent='🌫️';
+  $('ai-name').textContent=`${RNAME.ojama}（${labelOf('ojama')}）`;
+  $('ai-name').style.color='var(--ojama)';
+  $('ai-line').textContent='布石を置いています…';
+  G.oMode='opening';
+  setTimeout(()=>{
+    const type=aiType('ojama');let n=0;
+    for(let t=0;t<2;t++)for(let i=0;i<G.cfg.jinit;i++){
+      const c=chooseOpeningCell(type,t);
+      if(c!=null){G.debris[t][c]=1;n++;}
+    }
+    $('ai-line').textContent=`各盤の内側に布石を配置（計${n}個）。`;
+    setTimeout(beginTurns,AI_POST);
+  },AI_THINK);
+}
+function beginTurns(){G.oMode='place';G.step=0;runCurrent();}
 
 /* ===== 進行制御 ===== */
 function currentActor(){return STEPS[G.step];}
@@ -393,32 +514,37 @@ function runCurrent(){
 
 /* 手渡し */
 function showHandoff(role,actor){
-  $('ho-day').textContent=`第 ${G.day} 日 ／ ${MAX_DAY} 日`;
-  $('ho-name').textContent=RNAME[role]+' の番';
+  $('ho-day').textContent=actor.kind==='opening'?'布石':`第 ${G.day} 日 ／ ${MAX_DAY} 日`;
+  $('ho-name').textContent=RNAME[role]+(actor.kind==='opening'?' の布石':' の番');
   $('ho-name').className='handoff-name '+role;
-  $('ho-sub').innerHTML=role==='ojama'
-    ?'端末をおじゃま係に渡してください。<br>全知：二人の位置が見えます。'
+  $('ho-sub').innerHTML=actor.kind==='opening'
+    ?'端末をキング係に渡してください。<br>開始前に各盤の内側へ布石を置きます。'
+    :role==='ojama'
+    ?'端末をキング係に渡してください。<br>二人の位置が見えます。'
     :'端末をこのプレイヤーに渡してください。<br>ほかの人は画面を見ないでね。';
   G._pending={role,actor};
   show('screen-handoff');
 }
 $('btn-open').onclick=()=>{
   const {role,actor}=G._pending;
-  if(actor.kind==='seeker')openSeeker(actor.idx);
+  if(actor.kind==='opening')openOpening();
+  else if(actor.kind==='seeker')openSeeker(actor.idx);
   else openOjama(actor.target);
 };
 
 /* ===== シーカー手番（人間） ===== */
 function openSeeker(idx){
   G.roll=null;G.dice=null;G.sel=null;G.selPath=null;G.reach=[];G.layers=null;G._phase='roll';G._idx=idx;
+  seekerTurnStart(idx); // 先交差：動く前に交差を照合して belief 更新
   renderSeeker();show('screen-seek');
 }
 function renderSeeker(){
   const idx=G._idx,role=idx===0?'orihime':'hikoboshi';
   $('s-day').textContent=`第 ${G.day} 日 ／ ${MAX_DAY} 日`;
   $('s-player').textContent=RNAME[role];$('s-player').className='turn-player '+role;
-  // お知らせ（前手番の出目開示）
+  // お知らせ（手番冒頭に判明した先交差＋前手番の出目開示）
   let html='';
+  if(G.preCross&&G.preCross.length>0)html+=`<div class="news"><span class="em">✦ 交差を発見！</span> 自分の直前の道と相手の直前の道が ${G.preCross.length} マスで重なった。この手がかりを見て動こう。</div>`;
   const news=G.news[idx];
   if(news&&G.share&&news.oppRoll!=null)html+=`<div class="news">相手は前の手番で <b class="roll">${news.oppRoll}</b> マスぶん動いたと伝えられた。</div>`;
   $('s-news').innerHTML=html;
@@ -436,7 +562,7 @@ function renderSeeker(){
   if(G._phase==='roll')p.innerHTML='サイコロを振って移動しよう。';
   else if(G._phase==='pick')p.innerHTML=`<span class="em">${G.roll}</span> 歩ちょうどで行けるマスを選んでください。`;
   else if(G._phase==='done'){
-    let m=G.lastCross.length>0?`<span class="em">✦ 交差を発見！</span> 相手の直前の道と ${G.lastCross.length} マスで重なった。`:'この移動では相手の道と重ならなかった。';
+    let m='移動しました。';
     if(G.share)m+=`<br><span class="note">手番終了時、出目「${G.roll}」を相手に伝えます。</span>`;
     p.innerHTML=m;
   }
@@ -448,7 +574,7 @@ function renderBoardSeek(){
   const lastSet=new Set(G.lastPath[idx]);
   const reachSet=new Set(G._phase==='pick'?G.reach:[]);
   const prevSet=new Set(G.selPath||[]);
-  const ncSet=new Set(G._phase==='done'?G.lastCross:[]);
+  const ncSet=new Set(G.preCross||[]); // 先交差：手番中はじめに判明した交差を常にハイライト
   for(let c=0;c<SZ;c++){
     const d=document.createElement('div');d.className='cell';
     if(deb[c])d.classList.add('debris');
@@ -491,63 +617,104 @@ function legalOjamaCells(target){
   for(let c=0;c<SZ;c++)if(!deb[c]&&c!==G.pos[0]&&c!==G.pos[1])out.push(c);
   return out;
 }
+// 現在のモードに応じた合法マス（opening=内側のみ・place=通常）
+function legalCellsFor(target){return G.oMode==='opening'?legalOpeningCells(target):legalOjamaCells(target);}
 function openOjama(target){
+  G.oMode='place';
   G.oTarget=target;G.oSel=null;
   $('o-day').textContent=`第 ${G.day} 日 ／ ${MAX_DAY} 日`;
-  const tn=target===0?'織姫':'彦星';
+  const tn=target===0?'シーカー（織姫）':'シーカー（彦星）';
   $('o-info').innerHTML=`二人の距離 <b>${dist(G.pos[0],G.pos[1])}</b>　置いた総数 <b>${totalDebris()}</b>`;
-  $('o-prompt').innerHTML=`次に動く <span class="em">${tn}</span> の盤にデブリを1つ。合流点を読んで塞ごう。`;
+  $('o-prompt').innerHTML=`移動した <span class="em">${tn}</span> の盤にデブリを1つ。合流点を読んで塞ごう。`;
   $('o-confirm').disabled=true;
+  $('o-confirm').textContent='ここにデブリを置く';
   renderBoardOjama();show('screen-ojama');
 }
 function totalDebris(){let n=0;for(let i=0;i<SZ;i++)n+=G.debris[0][i]+G.debris[1][i];return n;}
 function renderBoardOjama(){
-  const holder=$('board-ojama');const board=document.createElement('div');board.id='board';
-  const legal=new Set(legalOjamaCells(G.oTarget));
-  for(let c=0;c<SZ;c++){
-    const d=document.createElement('div');d.className='cell';
-    if(G.debris[0][c])d.classList.add('d0');
-    if(G.debris[1][c])d.classList.add('d1');
-    if(G.stamp[0][c]>NEG)d.classList.add('trail','trail0');
-    if(G.stamp[1][c]>NEG)d.classList.add('trail','trail1');
-    if(c===G.pos[0])d.classList.add('p0');
-    if(c===G.pos[1])d.classList.add('p1');
-    if(legal.has(c)){d.classList.add('place');if(c===G.oSel)d.classList.add('placesel');d.onclick=()=>{G.oSel=c;$('o-confirm').disabled=false;renderBoardOjama();};}
-    board.appendChild(d);
+  const holder=$('board-ojama');holder.innerHTML='';
+  const wrap=document.createElement('div');wrap.className='dual-board';
+  for(let idx=0;idx<2;idx++){
+    const col=document.createElement('div');col.className='board-col'+(idx===G.oTarget?' active':'');
+    const label=document.createElement('div');
+    label.className='board-label '+(idx===0?'orihime':'hikoboshi');
+    label.textContent=(idx===0?'織姫の盤':'彦星の盤')+(idx===G.oTarget?'（設置対象）':'');
+    col.appendChild(label);
+    const board=document.createElement('div');board.className='board';
+    const legal=idx===G.oTarget?new Set(legalCellsFor(idx)):new Set();
+    for(let c=0;c<SZ;c++){
+      const d=document.createElement('div');d.className='cell';
+      if(G.debris[idx][c])d.classList.add('debris');
+      else{
+        if(G.stamp[idx][c]>NEG)d.classList.add('trail','trail'+idx);
+        if(c===G.pos[0])d.classList.add('p0');
+        if(c===G.pos[1])d.classList.add('p1');
+        if(legal.has(c)){d.classList.add('place');if(c===G.oSel)d.classList.add('placesel');d.onclick=()=>{G.oSel=c;$('o-confirm').disabled=false;renderBoardOjama();};}
+      }
+      board.appendChild(d);
+    }
+    col.appendChild(board);
+    wrap.appendChild(col);
   }
-  holder.innerHTML='';holder.appendChild(board);
+  holder.appendChild(wrap);
 }
 $('o-confirm').onclick=()=>{
   if(G.oSel==null)return;
+  if(G.oMode==='opening'){
+    G.debris[G.oTarget][G.oSel]=1;
+    G.opening.remaining[G.oTarget]--;
+    G.oSel=null;
+    if(G.opening.remaining[0]<=0&&G.opening.remaining[1]<=0){beginTurns();return;}
+    openOpening();
+    return;
+  }
   G.debris[G.oTarget][G.oSel]=1;
   advance();
 };
 
 /* ===== 手の適用 ===== */
+// 先交差: 手番の頭で「自分の直前経路 ∩ 相手の直前経路」を照合し、それを見てから動く。
+// 旧ルール（移動後に交差を知る）と違い、確定した2本の経路を静的に突き合わせるだけなのでアナログ運用が楽。
+function seekerTurnStart(idx){
+  const op=1-idx;
+  let pre=[];
+  if(G.moved[idx]&&G.moved[op]){
+    const opSet=new Set(G.lastPath[op]);
+    const cs=new Set();
+    for(const x of G.lastPath[idx])if(opSet.has(x))cs.add(x);
+    pre=[...cs];
+    const b=G.belief[idx];
+    // 交差あり → 相手の直前の移動がそこを通った。相手の現在地は交差点から相手の出目以内。
+    if(pre.length>0){
+      const R=(G.share&&G.lastRoll[op]!=null)?G.lastRoll[op]:MAXROLL;
+      observeCross(b,pre,R);
+    }
+    // 負の情報: 自分の直前経路のうち交差しなかったマスに相手はいない（相手の直前経路に含まれない）
+    for(const x of G.lastPath[idx])if(!cs.has(x))b[x]=0;
+    b[G.pos[idx]]=0; // 出会っていない
+    normalize(b);
+  }
+  G.preCross=pre;
+  for(const c of pre)G.knownCross[idx].add(c);
+}
 function applySeekerMove(idx,landing,path,roll){
   G.turn++;const op=1-idx;
-  const seg=path.slice(1);
-  const cr=[];
-  for(const x of seg){const t=G.stamp[op][x];if(t>NEG+1&&(G.turn-t)<=DECAY)cr.push(x);}
-  const uniq=[...new Set(cr)];
   for(const x of path)G.stamp[idx][x]=G.turn;
   G.lastPath[idx]=[...new Set(path)];
   G.pos[idx]=landing;G.lastRoll[idx]=roll;G.moved[idx]=true;
-  for(const c of uniq)G.knownCross[idx].add(c);
-  G.lastCross=uniq;
+  G.lastCross=G.preCross; // 表示用（この手番の頭に判明した交差）
   // 相手への申し送り（出目のみ）
   G.news[op]={oppRoll:roll};
-  // belief更新
-  const R=(G.share&&G.moved[op]&&G.lastRoll[op]!=null)?G.lastRoll[op]:(NDICE*FACES);
-  observeCross(G.belief[idx],uniq,R);G.belief[idx][landing]=0;normalize(G.belief[idx]);
-  G.belief[op]=diffuse(G.belief[op]);G.belief[op][G.pos[op]]=0;normalize(G.belief[op]);
+  // 動かなかった側（op）は「自分が roll 歩動いた」ことを観測 → 出目分布で前方伝播
+  G.belief[op]=propagate(G.belief[op],G.share?roll:null);G.belief[op][G.pos[op]]=0;normalize(G.belief[op]);
   return landing===G.pos[op];
 }
 function applyStuck(idx,roll){
   G.turn++;const op=1-idx;
   G.stamp[idx][G.pos[idx]]=G.turn;G.lastPath[idx]=[G.pos[idx]];G.lastRoll[idx]=roll;G.moved[idx]=true;
-  G.lastCross=[];G.news[op]={oppRoll:roll};
-  G.belief[op]=diffuse(G.belief[op]);G.belief[op][G.pos[op]]=0;normalize(G.belief[op]);
+  G.lastCross=G.preCross;G.news[op]={oppRoll:roll};
+  // idx は足止め（動けなかった）ので op の belief は前方伝播せず、現在地除外のみ
+  G.belief[op][G.pos[op]]=0;normalize(G.belief[op]);
 }
 
 /* ===== AI ===== */
@@ -568,13 +735,37 @@ function chooseSeekerLanding(idx,type,reach){
   return best;
 }
 function chooseOjamaCell(type,target){
-  const legal=legalOjamaCells(target);if(legal.length===0)return null;
+  return chooseOjamaCellFrom(type,legalOjamaCells(target),target);
+}
+// 布石の配置先（内側のみ）。シーカーはまだ動いていないので開始位置を読んで合流点を毒す
+function chooseOpeningCell(type,target){
+  return chooseOjamaCellFrom(type,legalOpeningCells(target),target);
+}
+function chooseOjamaCellFrom(type,legal,target){
+  if(legal.length===0)return null;
   if(type==='random')return legal[(Math.random()*legal.length)|0];
   const A=G.pos[0],B=G.pos[1],D=dist(A,B);
+  // afocal: 二人の位置から合流予測点 F を独立推定（シーカーの目標関数は使わない＝循環回避）し、
+  // F の近傍を盤ごとに"逆側"から毒す。盤0=低index側（上・左）、盤1=高index側（下・右）を優先。
+  // → 二人の「Fに最も近い空きマス」が食い違い、別々の代替焦点へ散って会えなくなる。
+  if(type==='afocal'){
+    let F=-1,fs=Infinity;
+    for(const q of INTERIOR){const s=(dist(q,A)+dist(q,B))*10+dist(q,CENTER);if(s<fs){fs=s;F=q;}}
+    if(F>=0){
+      let best=null,bs=Infinity;
+      for(const c of legal){
+        const dF=dist(c,F);if(dF>2)continue;
+        const side=target===0?c:(SZ-1-c);
+        const s=dF*10000+side;
+        if(s<bs){bs=s;best=c;}
+      }
+      if(best!=null)return best; // F近傍が埋まっていたら下のchase式へフォールバック
+    }
+  }
   let best=legal[0],bs=Infinity;
   for(const c of legal){
     let s;
-    if(type==='chase')s=(dist(c,A)+dist(c,B))*10+dist(c,CENTER);
+    if(type==='chase'||type==='afocal')s=(dist(c,A)+dist(c,B))*10+dist(c,CENTER);
     else s=Math.abs(dist(A,c)+dist(c,B)-D)*10+Math.abs(dist(c,A)-dist(c,B))+dist(c,CENTER)*0.3; // wall: 最短経路の中間
     s+=Math.random()*1e-3;
     if(s<bs){bs=s;best=c;}
@@ -592,6 +783,7 @@ function runAI(role,actor){
     let line='';
     if(actor.kind==='seeker'){
       const idx=actor.idx,type=aiType(role);
+      seekerTurnStart(idx); // 先交差：振る前に交差を照合して belief 更新
       const r=rollDice();const roll=r.sum;
       const layers=computeLayers(G.pos[idx],roll,G.debris[idx]);
       const reach=[...layers[roll]];
@@ -605,7 +797,7 @@ function runAI(role,actor){
       }
     }else{
       const cell=chooseOjamaCell(aiType(role),actor.target);
-      if(cell!=null){G.debris[actor.target][cell]=1;const tn=actor.target===0?'織姫':'彦星';line=`${tn}の盤にデブリを設置。`;}
+      if(cell!=null){G.debris[actor.target][cell]=1;const tn=actor.target===0?'シーカー（織姫）':'シーカー（彦星）';line=`${tn}の盤にデブリを設置。`;}
       else line='置ける場所が無い。';
     }
     $('ai-line').textContent=line;
@@ -627,7 +819,7 @@ function endGame(seekersWin){
   }else{
     $('r-emoji').textContent='🌌';
     $('r-title').textContent='また来年';$('r-title').className='result-title lose';
-    $('r-sub').innerHTML=`七日が過ぎ、二人は出会えませんでした。<br>おじゃまの勝ち。`;
+    $('r-sub').innerHTML=`${MAX_DAY} 日が過ぎ、二人は出会えませんでした。<br>キングの勝ち。`;
   }
   show('screen-result');
 }
