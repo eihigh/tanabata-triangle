@@ -26,7 +26,7 @@
     transform:translate(-50%,-50%) rotate(-28deg);
     background:linear-gradient(90deg,transparent,rgba(180,200,255,.03) 20%,rgba(220,230,255,.07) 50%,rgba(180,200,255,.03) 80%,transparent);
     filter:blur(6px);}
-  #app{position:relative;z-index:1;width:min(560px,94vw);padding:18px 0 32px;}
+  #app{position:relative;z-index:1;width:min(560px,94vw);padding:18px 0 32px;margin:auto;}
   .screen{display:none;}
   .screen.active{display:block;animation:fadein .35s ease;}
   @keyframes fadein{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}
@@ -139,6 +139,31 @@
   .legend{display:flex;flex-wrap:wrap;gap:10px 16px;justify-content:center;font-size:.72rem;color:var(--dim);margin-bottom:8px;}
   .legend span{display:flex;align-items:center;gap:5px;}
   .lg{width:11px;height:11px;border-radius:50%;}
+  /* プレイ履歴・傾向 */
+  #history-panel h2{display:flex;justify-content:space-between;align-items:baseline;}
+  #history-panel h2 .hp-total{color:var(--dim);font-size:.74rem;font-weight:400;letter-spacing:0;}
+  .hp-overall{display:flex;align-items:baseline;gap:8px;margin:2px 0 12px;}
+  .hp-rate{font-size:1.5rem;font-weight:700;color:var(--gold);line-height:1;}
+  .hp-rate.mid{color:var(--sakura);} .hp-rate.low{color:var(--ojama);}
+  .hp-wl{color:var(--dim);font-size:.78rem;}
+  .hp-sub{color:var(--dim);font-size:.72rem;letter-spacing:.06em;margin:12px 0 4px;text-transform:uppercase;}
+  .hp-brk{display:grid;grid-template-columns:auto 1fr auto;gap:3px 9px;align-items:center;font-size:.76rem;}
+  .hp-brk .k{color:var(--text);white-space:nowrap;}
+  .hp-bar{height:7px;border-radius:4px;background:rgba(120,140,220,.14);overflow:hidden;}
+  .hp-bar>i{display:block;height:100%;background:linear-gradient(90deg,var(--gold),#e8b84a);}
+  .hp-brk .v{color:var(--dim);white-space:nowrap;font-variant-numeric:tabular-nums;}
+  .hp-list{display:flex;flex-direction:column;gap:4px;max-height:210px;overflow-y:auto;margin-top:4px;
+    scrollbar-width:thin;padding-right:2px;}
+  .hp-row{display:flex;align-items:center;gap:8px;font-size:.72rem;line-height:1.4;padding:5px 8px;
+    border-radius:8px;background:rgba(120,140,220,.06);border:1px solid rgba(140,160,230,.08);}
+  .hp-row .res{flex-shrink:0;font-weight:700;width:2.4em;text-align:center;}
+  .hp-row .res.win{color:var(--gold);} .hp-row .res.lose{color:var(--ojama);}
+  .hp-row .meta{flex:1;min-width:0;color:var(--dim);}
+  .hp-row .meta b{color:var(--text);font-weight:600;}
+  .hp-row .when{flex-shrink:0;color:var(--dim);font-size:.66rem;}
+  .hp-reset{background:transparent;color:var(--dim);border:1px solid rgba(160,180,255,.25);box-shadow:none;
+    font-size:.74rem;font-weight:500;padding:8px 14px;width:auto;margin:12px auto 0;}
+  .hp-reset:hover:not(:disabled){transform:none;box-shadow:none;background:rgba(199,125,255,.12);color:var(--text);}
 </style>
 </head>
 <body>
@@ -150,6 +175,7 @@
   <div class="screen active" id="screen-setup">
     <h1>七夕トライアングル</h1>
     <p class="subtitle">— 三人の夜、天の川の読み合い —</p>
+    <div class="panel" id="history-panel" style="display:none;"></div>
     <div class="panel">
       <div class="role-card">
         <div class="role-head"><span class="role-dot orihime"></span>シーカー（織姫）</div>
@@ -224,6 +250,7 @@
     <div class="prompt" id="s-prompt"></div>
     <div class="btn-stack">
       <button id="s-roll">サイコロを振る</button>
+      <button id="s-reroll" style="display:none">振り直す</button>
       <button id="s-confirm" style="display:none">このマスに移動</button>
       <button id="s-end" style="display:none">手番を終える</button>
     </div>
@@ -270,7 +297,7 @@
 'use strict';
 /* ===== 定数 ===== */
 const N=7, SZ=N*N, DECAY=1;
-let NDICE=2, FACES=4; // 使うサイコロ（設定画面で変更可）
+let NDICE=2, FACES=4, REROLL=0; // 使うサイコロ（設定画面で変更可。REROLL=出目がこの値以下なら振り直し）
 let MAX_DAY=7; // 難易度で変化（normal=7日 / hard=3日）
 const CENTER=((N-1>>1))*N+((N-1)>>1);
 const NEG=-1e9;
@@ -305,11 +332,13 @@ const DIFF_OPTS=[
   {id:7,label:'normal',tag:'7日制限（標準）'},
   {id:3,label:'hard',tag:'3日制限（上級）'},
 ];
-/* 使うサイコロ：2d4（標準・バランス最良）／ 1d6（キング激辛・交差痩せ）／ 2d6（旧標準） */
+/* 使うサイコロ：1d6振1（標準・1で振り直し）／ 2d4／ 1d6（キング激辛・交差痩せ）／ 2d6（旧標準）／ 1d6振2（1・2で振り直し） */
 const DICE_OPTS=[
-  {id:'2,4',label:'2d4',tag:'4面2個（標準）'},
+  {id:'1,6,1',label:'1d6振1',tag:'1で振り直し（標準）'},
+  {id:'2,4',label:'2d4',tag:'4面2個'},
   {id:'1,6',label:'1d6',tag:'6面1個（キング有利）'},
   {id:'2,6',label:'2d6',tag:'6面2個（シーカー有利）'},
+  {id:'1,6,2',label:'1d6振2',tag:'1・2で振り直し'},
 ];
 /* 集合点メニュー（中心＋4象限） */
 const RQ=Math.max(1,Math.round(N/4));
@@ -346,7 +375,9 @@ function onePathFromLayers(layers,target,k){
   }
   return path.reverse();
 }
-const rollDice=()=>{const dice=[];let s=0;for(let i=0;i<NDICE;i++){const v=1+((Math.random()*FACES)|0);dice.push(v);s+=v;}return {sum:s,dice};};
+// auto=true のときはAI・推論用として REROLL 以下の目を自動で振り直す（常に振り直す方針）。
+// 人間の手番は auto=false で一回だけ振り、振り直すかはボタンで選ばせる。
+const rollDice=(auto=false)=>{const dice=[];let s=0;for(let i=0;i<NDICE;i++){let v;do{v=1+((Math.random()*FACES)|0);}while(auto&&REROLL&&v<=REROLL);dice.push(v);s+=v;}return {sum:s,dice};};
 
 /* ===== belief（AI推理用） ===== */
 function makeBelief(myStart){
@@ -359,9 +390,9 @@ function normalize(b){let s=0;for(let i=0;i<SZ;i++)s+=b[i];if(s>1e-12){for(let i
 /* ダイス合計の確率（index=合計値）。相手の1手番移動をこの分布で前方伝播する */
 let DICE_PROBS=diceProbs();
 let MINROLL=NDICE, MAXROLL=NDICE*FACES;
-function diceProbs(){let d=[1];for(let k=0;k<NDICE;k++){const nd=new Array(d.length+FACES).fill(0);for(let s=0;s<d.length;s++){if(!d[s])continue;for(let v=1;v<=FACES;v++)nd[s+v]+=d[s]/FACES;}d=nd;}return d;}
+function diceProbs(){const lo=REROLL+1,cnt=FACES-REROLL;let d=[1];for(let k=0;k<NDICE;k++){const nd=new Array(d.length+FACES).fill(0);for(let s=0;s<d.length;s++){if(!d[s])continue;for(let v=lo;v<=FACES;v++)nd[s+v]+=d[s]/cnt;}d=nd;}return d;}
 /* 設定画面で選んだサイコロを反映（確率分布と出目の範囲を再計算） */
-function setDice(n,f){NDICE=n;FACES=f;DICE_PROBS=diceProbs();MINROLL=NDICE;MAXROLL=NDICE*FACES;}
+function setDice(n,f,reroll=0){NDICE=n;FACES=f;REROLL=reroll;DICE_PROBS=diceProbs();MINROLL=NDICE*(REROLL+1);MAXROLL=NDICE*FACES;}
 /* ちょうど k 歩で到達できるマス（障害物なし4近傍：マンハッタン距離 d<=k かつ (k-d) が偶数）。相手の私的デブリは不可視なので開盤で近似（sim の belief 伝播と同じ） */
 const _reachCache=new Map();
 function reachExact(p,k){
@@ -435,7 +466,7 @@ function aiType(role){return G.cfg.roles[role];}
 function isHuman(role){return G.cfg.roles[role]==='human';}
 
 /* ===== 設定画面 ===== */
-const selection={orihime:'human',hikoboshi:'greedy',ojama:'censor',jinit:2,maxDay:7,dice:'2,4'};
+const selection={orihime:'human',hikoboshi:'greedy',ojama:'censor',jinit:2,maxDay:7,dice:'1,6,1'};
 function buildOpts(role,list){
   const holder=$('opts-'+role);holder.innerHTML='';
   for(const o of list){
@@ -479,12 +510,113 @@ function buildDice(){
 buildOpts('orihime',SEEKER_AIS);buildOpts('hikoboshi',SEEKER_AIS);buildOpts('ojama',OJAMA_AIS);buildJinit();buildDiff();buildDice();
 
 $('btn-start').onclick=()=>{
-  const [dn,df]=selection.dice.split(',').map(Number);
-  setDice(dn,df);
-  newGame({roles:{...selection},share:$('opt-share').checked,jinit:selection.jinit,maxDay:selection.maxDay});
+  const [dn,df,dr]=selection.dice.split(',').map(Number);
+  setDice(dn,df,dr||0);
+  newGame({roles:{...selection},share:$('opt-share').checked,jinit:selection.jinit,maxDay:selection.maxDay,dice:selection.dice});
   beginGame();
 };
-$('btn-again').onclick=()=>show('screen-setup');
+$('btn-again').onclick=()=>{renderHistory();show('screen-setup');};
+
+/* ===== プレイ履歴・傾向（localStorage） ===== */
+const HIST_KEY='tanabata3p.history.v1';
+function loadHistory(){
+  try{const a=JSON.parse(localStorage.getItem(HIST_KEY));return Array.isArray(a)?a:[];}
+  catch(e){return [];}
+}
+function saveHistory(a){
+  try{localStorage.setItem(HIST_KEY,JSON.stringify(a));}catch(e){}
+}
+function recordGame(seekersWin){
+  if(!G||!G.cfg)return;
+  const c=G.cfg;
+  const rec={
+    ts:Date.now(),
+    win:!!seekersWin,
+    day:G.day,
+    roles:{...c.roles},
+    share:!!c.share,
+    dice:c.dice,
+    jinit:c.jinit|0,
+    maxDay:c.maxDay||MAX_DAY,
+  };
+  const h=loadHistory();
+  h.push(rec);
+  if(h.length>300)h.splice(0,h.length-300); // 上限
+  saveHistory(h);
+}
+/* ラベル解決 */
+const _lbl=(list,id)=>{const o=list.find(x=>String(x.id)===String(id));return o?o.label:String(id);};
+const diceLabel=id=>_lbl(DICE_OPTS,id);
+const seekLabel=id=>_lbl(SEEKER_AIS,id);
+const ojamaLabel=id=>_lbl(OJAMA_AIS,id);
+const jinitLabel=id=>_lbl(JINIT_OPTS,id);
+const diffLabel=id=>_lbl(DIFF_OPTS,id);
+function fmtWhen(ts){
+  const d=new Date(ts);const z=n=>String(n).padStart(2,'0');
+  return `${d.getMonth()+1}/${d.getDate()} ${z(d.getHours())}:${z(d.getMinutes())}`;
+}
+function rateClass(p){return p>=0.6?'':(p>=0.35?'mid':'low');}
+/* 集計：keyFn でグループ化して勝率を出す */
+function breakdown(h,keyFn,labelFn){
+  const m=new Map();
+  for(const r of h){
+    const k=keyFn(r);
+    if(!m.has(k))m.set(k,{key:k,n:0,win:0});
+    const g=m.get(k);g.n++;if(r.win)g.win++;
+  }
+  return [...m.values()]
+    .sort((a,b)=>b.n-a.n)
+    .map(g=>({label:labelFn(g.key),n:g.n,win:g.win,p:g.win/g.n}));
+}
+function brkHTML(title,rows){
+  if(rows.length<2)return ''; // 1種類しかなければ傾向として意味が薄い
+  let s=`<div class="hp-sub">${title}</div><div class="hp-brk">`;
+  for(const r of rows){
+    const pct=Math.round(r.p*100);
+    s+=`<span class="k">${r.label}</span>`
+      +`<span class="hp-bar"><i style="width:${pct}%"></i></span>`
+      +`<span class="v">${pct}% (${r.win}/${r.n})</span>`;
+  }
+  return s+`</div>`;
+}
+function renderHistory(){
+  const panel=$('history-panel');
+  const h=loadHistory();
+  if(!h.length){panel.style.display='none';panel.innerHTML='';return;}
+  panel.style.display='';
+  const n=h.length, win=h.filter(r=>r.win).length, p=win/n;
+  let s=`<h2>プレイ履歴と傾向<span class="hp-total">${n} 戦</span></h2>`;
+  s+=`<div class="hp-overall"><span class="hp-rate ${rateClass(p)}">${Math.round(p*100)}%</span>`
+    +`<span class="hp-wl">シーカー勝率 ・ ${win}勝 ${n-win}敗</span></div>`;
+  s+=brkHTML('サイコロ別', breakdown(h,r=>r.dice,diceLabel));
+  s+=brkHTML('布石別', breakdown(h,r=>r.jinit,jinitLabel));
+  s+=brkHTML('日数制限別', breakdown(h,r=>r.maxDay,diffLabel));
+  s+=brkHTML('キング別', breakdown(h,r=>r.roles.ojama,ojamaLabel));
+  s+=brkHTML('出目開示', breakdown(h,r=>r.share?'on':'off',v=>v==='on'?'開示あり':'開示なし'));
+  // 直近の履歴（新しい順・最大20件）
+  s+=`<div class="hp-sub">直近のプレイ</div><div class="hp-list">`;
+  const recent=h.slice(-20).reverse();
+  for(const r of recent){
+    const resCls=r.win?'win':'lose', resTxt=r.win?'再会':'決裂';
+    const setup=`${diceLabel(r.dice)}・${jinitLabel(r.jinit)}・${r.maxDay}日制限`
+      +`・王:${ojamaLabel(r.roles.ojama)}`
+      +`・織:${seekLabel(r.roles.orihime)}/彦:${seekLabel(r.roles.hikoboshi)}`
+      +(r.share?'・開示':'');
+    const tail=r.win?`${r.day}日目に再会`:`${r.maxDay}日で決裂`;
+    s+=`<div class="hp-row"><span class="res ${resCls}">${resTxt}</span>`
+      +`<span class="meta"><b>${tail}</b><br>${setup}</span>`
+      +`<span class="when">${fmtWhen(r.ts)}</span></div>`;
+  }
+  s+=`</div>`;
+  s+=`<button class="hp-reset" id="hp-reset">履歴を消去</button>`;
+  panel.innerHTML=s;
+  $('hp-reset').onclick=()=>{
+    if(confirm(`プレイ履歴 ${n} 戦をすべて消去しますか？`)){
+      saveHistory([]);renderHistory();
+    }
+  };
+}
+renderHistory();
 
 /* ===== 布石（開始前のデブリ配置） ===== */
 function beginGame(){
@@ -596,12 +728,13 @@ function renderSeeker(){
     const su=document.createElement('div');su.className='dice-sum';su.textContent='= '+G.roll;dr.appendChild(su);}
   // buttons/prompt
   $('s-roll').style.display=G._phase==='roll'?'':'none';
+  $('s-reroll').style.display=(G._phase==='pick'&&REROLL>0&&G.roll<=REROLL)?'':'none';
   $('s-confirm').style.display=G._phase==='pick'?'':'none';
   $('s-confirm').disabled=G.sel==null;
   $('s-end').style.display=G._phase==='done'?'':'none';
   const p=$('s-prompt');
   if(G._phase==='roll')p.innerHTML='サイコロを振って移動しよう。';
-  else if(G._phase==='pick')p.innerHTML=`<span class="em">${G.roll}</span> 歩ちょうどで行けるマスを選んでください。`;
+  else if(G._phase==='pick'){p.innerHTML=`<span class="em">${G.roll}</span> 歩ちょうどで行けるマスを選んでください。`;if(REROLL>0&&G.roll<=REROLL)p.innerHTML+=`<br><span class="note">出目が ${REROLL} 以下なので「振り直す」も選べます。</span>`;}
   else if(G._phase==='done'){
     let m='移動しました。';
     if(G.share)m+=`<br><span class="note">手番終了時、出目「${G.roll}」を相手に伝えます。</span>`;
@@ -634,12 +767,14 @@ function renderBoardSeek(){
 }
 $('s-roll').onclick=()=>{
   const r=rollDice();G.roll=r.sum;G.dice=r.dice; // 実際の各サイコロの目を見せる（1d6は1個、2dXは2個）
+  G.sel=null;G.selPath=null;
   G.layers=computeLayers(G.pos[G._idx],G.roll,G.debris[G._idx]);
   G.reach=[...G.layers[G.roll]];
   if(G.reach.length===0){ // 詰み
     applyStuck(G._idx,G.roll);G._phase='done';G.lastCross=[];renderSeeker();
   }else{G._phase='pick';renderSeeker();}
 };
+$('s-reroll').onclick=$('s-roll').onclick;
 function pickCell(c){G.sel=c;G.selPath=onePathFromLayers(G.layers,c,G.roll);renderSeeker();}
 $('s-confirm').onclick=()=>{
   const win=applySeekerMove(G._idx,G.sel,G.selPath,G.roll);
@@ -853,7 +988,7 @@ function runAI(role,actor){
     if(actor.kind==='seeker'){
       const idx=actor.idx,type=aiType(role);
       seekerTurnStart(idx); // 先交差：振る前に交差を照合して belief 更新
-      const r=rollDice();const roll=r.sum;
+      const r=rollDice(true);const roll=r.sum;
       const layers=computeLayers(G.pos[idx],roll,G.debris[idx]);
       const reach=[...layers[roll]];
       if(reach.length===0){applyStuck(idx,roll);line=`出目${roll}：止まれるマスが無く足止め。`;}
@@ -881,6 +1016,7 @@ function labelOf(role){
 /* ===== 結果 ===== */
 function endGame(seekersWin){
   G.over=true;
+  recordGame(seekersWin);
   if(seekersWin){
     $('r-emoji').textContent='🎋✨';
     $('r-title').textContent='再会';$('r-title').className='result-title win';

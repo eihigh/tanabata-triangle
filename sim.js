@@ -75,20 +75,34 @@ function mulberry32(seed) {
 }
 
 /* ===================== ダイス ===================== */
+// 表記例: "1d6" / "2d4" のほか、リロール付きは "1d6r"（出目が1・2ならもう一度）
+// や "1d6r3"（出目が3以下なら振り直し）のように r<しきい値> を付ける。
+// reroll=k は「出目が k 以下なら k+1 以上が出るまで振り直す」を意味する。
 function parseDiceSpec(s) {
-  const m = String(s).match(/^(\d+)d(\d+)$/i);
-  if (m) return { n: +m[1], f: +m[2], label: `${m[1]}d${m[2]}` };
-  return { n: 1, f: +s, label: `1d${s}` };
+  const m = String(s).match(/^(\d+)d(\d+)(r\d*)?$/i);
+  if (m) {
+    const n = +m[1], f = +m[2];
+    let reroll = 0, label = `${n}d${f}`;
+    if (m[3]) {
+      reroll = m[3].length > 1 ? +m[3].slice(1) : 2; // "r" 単体は 1・2 で振り直し
+      label = `${n}d${f}r${reroll}`;
+    }
+    return { n, f, reroll, label };
+  }
+  return { n: 1, f: +s, reroll: 0, label: `1d${s}` };
 }
 
-// 合計値ごとの確率（index=合計値）
-function diceProbs(n, f) {
+// 合計値ごとの確率（index=合計値）。reroll>0 なら reroll 以下の目を除外した
+// 条件付き分布（常に振り直す方針なので、実効面が reroll+1..f の一様）になる。
+function diceProbs(n, f, reroll = 0) {
+  const lo = reroll + 1;      // 採用される最小の目
+  const cnt = f - reroll;     // 採用される目の数
   let dist = [1];
   for (let d = 0; d < n; d++) {
     const nd = new Array(dist.length + f).fill(0);
     for (let s = 0; s < dist.length; s++) {
       if (!dist[s]) continue;
-      for (let v = 1; v <= f; v++) nd[s + v] += dist[s] / f;
+      for (let v = lo; v <= f; v++) nd[s + v] += dist[s] / cnt;
     }
     dist = nd;
   }
@@ -162,8 +176,8 @@ class Board {
 
     // belief 伝播用の遷移行列（相手ランダムモデル）
     // Ts[s][p*size+q] = P(着地q | 位置p, 出目s) 、Tmix = 出目分布で混合
-    this.diceProbs = diceProbs(dice.n, dice.f);
-    this.minRoll = dice.n;
+    this.diceProbs = diceProbs(dice.n, dice.f, dice.reroll || 0);
+    this.minRoll = dice.n * ((dice.reroll || 0) + 1);
     this.maxRoll = dice.n * dice.f;
     this.Ts = [];
     this.Tmix = new Float64Array(this.size * this.size);
@@ -412,9 +426,21 @@ function ojamaPlace(board, cfg, blocks, posA, posB, mover, rng, day, crossHints,
     // random ポリシー / 各cageのフォールバック
     const legal = [];
     for (let q = 0; q < board.size; q++) {
-      if (!blockedArr[q] && q !== posA && q !== posB) legal.push(q);
+      if (!blockedArr[q] && q !== posA && q !== posB &&
+          (!cfg.jinterior || board.interiorMask[q])) legal.push(q);
     }
     if (legal.length) cell = legal[(rng() * legal.length) | 0];
+  }
+  // --jinterior: 外周は最初から最後まで配置禁止（詰み防止を全期間に拡張）。
+  // 方策が外周を選んだら、最寄りの内側の空きマスへ寄せる。
+  if (cfg.jinterior && cell >= 0 && !board.interiorMask[cell]) {
+    let best = -1, bd = Infinity;
+    for (const q of board.interior) {
+      if (blockedArr[q] || q === posA || q === posB) continue;
+      const d = board.d(q, cell) + rng() * 1e-3;
+      if (d < bd) { bd = d; best = q; }
+    }
+    cell = best;
   }
   return { cell, target };
 }
@@ -954,11 +980,15 @@ function playGame(board, cfg, rng) {
     console.log(`  [jdump] 一致マス数=${overlap} / 各盤${cfg.jinit}個  → 非対称なら一致は少ないほど良い`);
   }
 
-  let turn = 0, crossCellsTotal = 0, anyCross = false, stuck = 0;
+  let turn = 0, crossCellsTotal = 0, anyCross = false, stuck = 0, hintShown = false;
 
   const rollDice = () => {
     let s = 0;
-    for (let i = 0; i < dice.n; i++) s += 1 + ((rng() * dice.f) | 0);
+    for (let i = 0; i < dice.n; i++) {
+      let v;
+      do { v = 1 + ((rng() * dice.f) | 0); } while (dice.reroll && v <= dice.reroll);
+      s += v;
+    }
     return s;
   };
 
@@ -994,6 +1024,8 @@ function playGame(board, cfg, rng) {
         const deb = myBlocks;
         const preCross = [];
         for (const x of me.lastPathCells) if (opSet.has(x) && !(deb && deb[x])) preCross.push(x);
+        // 開示された✦交差（検閲で消えた分は含まない）が1つでもあれば「ヒントを見た」
+        if (preCross.length > 0) hintShown = true;
         // aware=censor: 検閲リークの推理。自分の直前経路は歩いた時点では全マス空きだったので、
         // いま自分の盤にデブリが乗っているマス＝この手番で新たに置かれた＝検閲された交差、と分かる。
         // 相手の経路を知らずとも「自分の経路∩自分の盤の新デブリ」だけで censored 交差を復元できる。
@@ -1044,6 +1076,8 @@ function playGame(board, cfg, rng) {
       const uniqCross = [...new Set(crosses)];
       crossCellsTotal += uniqCross.length;
       if (uniqCross.length > 0) anyCross = true;
+      // 先交差以外（post-move開示）のモードでは、この手番の交差がそのままヒントになる
+      if (uniqCross.length > 0 && !cfg.precross) hintShown = true;
 
       // 自分の軌跡スタンプと移動
       for (const x of path) me.stamp[x] = turn;
@@ -1066,9 +1100,9 @@ function playGame(board, cfg, rng) {
         players[0].focalTarget = players[1].focalTarget = ft;
       }
 
-      // 勝利判定（同マス限定）
-      if (me.pos === op.pos) {
-        return { met: true, day, crossCellsTotal, anyCross, stuck, minReach, firstClose2, firstClose4 };
+      // 勝利判定（同マス限定）。--noday1: 初日は出会っても成立しない（何も起こらず情報も得ない）
+      if (me.pos === op.pos && !(cfg.noday1 && day === 1)) {
+        return { met: true, day, crossCellsTotal, anyCross, hintShown, stuck, minReach, firstClose2, firstClose4 };
       }
 
       // ---- belief 更新（交差は「今、相手の直前の道を横切った側」だけが知る） ----
@@ -1134,7 +1168,7 @@ function playGame(board, cfg, rng) {
       void prevLastPath;
     }
   }
-  return { met: false, day: null, crossCellsTotal, anyCross, stuck, minReach, firstClose2, firstClose4 };
+  return { met: false, day: null, crossCellsTotal, anyCross, hintShown, stuck, minReach, firstClose2, firstClose4 };
 }
 
 /* ===================== 実験ランナー ===================== */
@@ -1143,11 +1177,13 @@ function runCondition(cfg) {
   const dice = cfg.dice;
   const board = getBoard(cfg.N, dice);
   const rng = mulberry32(cfg.seed || 12345);
-  let met = 0, sumDay = 0, cross = 0, anyCrossGames = 0, stuck = 0;
+  let met = 0, sumDay = 0, cross = 0, anyCrossGames = 0, stuck = 0, metNoHint = 0;
   let close2 = 0, metGivenClose2 = 0, sumFirstClose2 = 0, sumLastMile = 0, sumMinDist = 0;
+  const metByDay = new Array(cfg.maxDay + 1).fill(0);       // 日別の全出会い件数
+  const noHintByDay = new Array(cfg.maxDay + 1).fill(0);    // 日別のノーヒント出会い件数
   for (let i = 0; i < cfg.trials; i++) {
     const r = playGame(board, cfg, rng);
-    if (r.met) { met++; sumDay += r.day; }
+    if (r.met) { met++; sumDay += r.day; metByDay[r.day]++; if (!r.hintShown) { metNoHint++; noHintByDay[r.day]++; } }
     cross += r.crossCellsTotal;
     if (r.anyCross) anyCrossGames++;
     stuck += r.stuck;
@@ -1161,6 +1197,8 @@ function runCondition(cfg) {
   return {
     meetRate: (100 * met) / cfg.trials,
     avgDay: met ? sumDay / met : NaN,
+    noHintClearRate: (100 * metNoHint) / cfg.trials,          // ヒント（開示✦交差）を一度も見ずに出会えた割合（全試行比）
+    noHintOfMet: met ? (100 * metNoHint) / met : NaN,         // 出会えたゲームのうちノーヒントだった割合
     crossPerGame: cross / cfg.trials,
     crossGameRate: (100 * anyCrossGames) / cfg.trials,
     stuckPerGame: stuck / cfg.trials,
@@ -1170,28 +1208,40 @@ function runCondition(cfg) {
     firstClose2: close2 ? sumFirstClose2 / close2 : NaN,      // 初めて距離≤2になった日
     lastMile: metGivenClose2 ? sumLastMile / metGivenClose2 : NaN, // 接近から着地までの日数
     minDist: sumMinDist / cfg.trials,                 // 到達した最小距離の平均
+    metByDay, noHintByDay, trials: cfg.trials, maxDay: cfg.maxDay,
   };
 }
 
 const boardCache = new Map();
 function getBoard(N, dice) {
-  const key = `${N}:${dice.n}d${dice.f}`;
+  const key = `${N}:${dice.label}`;
   if (!boardCache.has(key)) boardCache.set(key, new Board(N, dice.n * dice.f, dice));
   return boardCache.get(key);
 }
 
 function fmt(x, d = 1) { return Number.isFinite(x) ? x.toFixed(d) : '-'; }
 
+// ノーヒントクリアの日別ヒストグラム（何日目に起きたか）。各セル=全試行に対する割合%。
+function printNoHintByDay(r) {
+  const cells = [];
+  for (let d = 1; d <= r.maxDay; d++) {
+    const nh = (100 * r.noHintByDay[d]) / r.trials;
+    const all = (100 * r.metByDay[d]) / r.trials;
+    cells.push(`${d}日:${fmt(nh).padStart(4)}%/${fmt(all).padStart(4)}%`);
+  }
+  console.log('  ノーヒント/全出会い（日別・全試行比） ' + cells.join(' '));
+}
+
 function printResult(label, r) {
   console.log(
     `${label.padEnd(42)} 出会い ${fmt(r.meetRate).padStart(5)}%  平均決着日 ${fmt(r.avgDay, 2).padStart(5)}  ` +
-    `交差/g ${fmt(r.crossPerGame, 2).padStart(6)}  交差有 ${fmt(r.crossGameRate).padStart(5)}%  詰み/g ${fmt(r.stuckPerGame, 2)}`
+    `交差/g ${fmt(r.crossPerGame, 2).padStart(6)}  交差有 ${fmt(r.crossGameRate).padStart(5)}%  ` +
+    `ノーヒントクリア ${fmt(r.noHintClearRate).padStart(5)}%(出会いの${fmt(r.noHintOfMet).padStart(5)}%)  詰み/g ${fmt(r.stuckPerGame, 2)}`
   );
 }
 
 // ラストワンマイル分解の表示
-function printDiag(label, r) {
-  console.log(
+function printDiag(label, r) {  console.log(
     `${label.padEnd(34)} 出会い ${fmt(r.meetRate).padStart(5)}%  ` +
     `接近≤2 ${fmt(r.close2Rate).padStart(5)}%  変換率 ${fmt(r.convRate).padStart(5)}%  ` +
     `初接近日 ${fmt(r.firstClose2, 2).padStart(4)}  接近→着地 ${fmt(r.lastMile, 2).padStart(4)}日  最小距離 ${fmt(r.minDist, 2)}`
@@ -1217,11 +1267,14 @@ function main() {
     else if (a.startsWith('--jcap=')) flags.jcap = +a.slice(7);
     else if (a.startsWith('--jinit=')) flags.jinit = +a.slice(8);
     else if (a === '--jasym') flags.jasym = true;
+    else if (a === '--jinterior') flags.jinterior = true;
     else if (a === '--jdump') flags.jdump = true;
     else if (a.startsWith('--aware=')) flags.aware = a.slice(8);
     else if (a === '--aware') flags.aware = 'dist';
     else if (a === '--sharedcross') flags.sharedCross = true;
     else if (a === '--precross') flags.precross = true;
+    else if (a === '--nhday') flags.nhday = true;
+    else if (a === '--noday1') flags.noday1 = true;
     else if (a.startsWith('--pfocal=')) flags.pfocal = a.slice(9);
     else pos.push(a);
   }
@@ -1253,12 +1306,16 @@ function main() {
         ojama: flags.ojama || 'none', jvariant: flags.jvariant || 'shared', jcap: flags.jcap, jinit: flags.jinit || 0,
         aware: flags.aware || null, sharedCross: !!flags.sharedCross,
         precross: !!flags.precross,
+        noday1: !!flags.noday1,
         pfocal: flags.pfocal || 'center', jasym: !!flags.jasym, jdump: !!flags.jdump,
+        jinterior: !!flags.jinterior,
       };
-      const jl = cfg.ojama !== 'none' ? ` 邪魔${cfg.ojama}-${cfg.jvariant}${cfg.jcap != null ? `(上限${cfg.jcap})` : ''}${cfg.jinit ? `(布石${cfg.jinit}${cfg.jasym ? '非対称' : ''})` : ''}` : '';
+      const jl = cfg.ojama !== 'none' ? ` 邪魔${cfg.ojama}-${cfg.jvariant}${cfg.jcap != null ? `(上限${cfg.jcap})` : ''}${cfg.jinit ? `(布石${cfg.jinit}${cfg.jasym ? '非対称' : ''})` : ''}${cfg.jinterior ? '(外周禁止)' : ''}` : '';
       const pl = cfg.pfocal && cfg.pfocal !== 'center' ? `[${cfg.pfocal}]` : '';
       const label = `${N}x${N} ${dice.label} ${maxDay}日 減衰${decay} ${policy}${pl}${cfg.aware ? `(認識${cfg.aware})` : ''}${cfg.eps ? `(ε=${cfg.eps})` : ''}${cfg.jeps ? `(κε=${cfg.jeps})` : ''}${cfg.share ? '+出目' : ''}${cfg.precross ? '+先交差' : ''}${cfg.oppModel === 'greedy' ? ' oppV2' : ''}${jl}`;
-      printResult(label, runCondition(cfg));
+      const res = runCondition(cfg);
+      printResult(label, res);
+      if (flags.nhday) printNoHintByDay(res);
     }
   }
 }

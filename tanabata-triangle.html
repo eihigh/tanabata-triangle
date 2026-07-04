@@ -209,11 +209,13 @@
     </div>
     <div class="panel">
       <div class="toggle-row">
-        <label for="opt-dice">使うサイコロ<br><span class="note">2d4＝4面2個（標準）／ 1d6＝6面1個 ／ 2d6＝6面2個</span></label>
+        <label for="opt-dice">使うサイコロ<br><span class="note">1d6（1で振り直し）＝標準・1なら何度でも振り直せる／ 2d4＝4面2個 ／ 1d6＝6面1個 ／ 2d6＝6面2個 ／ 1d6（1・2で振り直し）</span></label>
         <select id="opt-dice">
-          <option value="2,4" selected>2d4（標準）</option>
+          <option value="1,6,1" selected>1d6（1で振り直し・標準）</option>
+          <option value="2,4">2d4</option>
           <option value="1,6">1d6</option>
           <option value="2,6">2d6</option>
+          <option value="1,6,2">1d6（1・2で振り直し）</option>
         </select>
       </div>
       <div class="toggle-row">
@@ -246,6 +248,7 @@
     <div class="prompt" id="t-prompt"></div>
     <div class="btn-stack">
       <button id="btn-roll">サイコロを振る</button>
+      <button id="btn-reroll" style="display:none">振り直す</button>
       <button id="btn-confirm" style="display:none">このマスに移動する</button>
       <button id="btn-end" style="display:none">手番を終える</button>
     </div>
@@ -271,6 +274,7 @@ const N = 7;        // グリッド一辺
 const MAX_DAY = 7;  // 日数
 let NDICE = 2;      // サイコロ本数（設定画面で変更可）
 let FACES = 4;      // 面数（設定画面で変更可）
+let REROLL = 0;     // 振り直ししきい値（0=なし、k=出目がk以下なら振り直せる）
 const DECAY = 1;    // 交差判定：直近何手番の相手軌跡を有効とするか
 
 const PLAYERS = [
@@ -365,8 +369,8 @@ function show(id) {
 }
 
 $('btn-start').onclick = () => {
-  const [n, f] = $('opt-dice').value.split(',').map(Number);
-  NDICE = n; FACES = f;
+  const [n, f, r] = $('opt-dice').value.split(',').map(Number);
+  NDICE = n; FACES = f; REROLL = r || 0;
   newGame($('opt-share').checked);
   showHandoff();
 };
@@ -456,13 +460,17 @@ function renderDice() {
 
 function renderButtons() {
   $('btn-roll').style.display = G.phase === 'roll' ? '' : 'none';
+  $('btn-reroll').style.display = (G.phase === 'pick' && REROLL > 0 && G.roll <= REROLL) ? '' : 'none';
   $('btn-confirm').style.display = G.phase === 'pick' ? '' : 'none';
   $('btn-confirm').disabled = G.sel == null;
   $('btn-end').style.display = G.phase === 'done' ? '' : 'none';
 
   const prompt = $('t-prompt');
   if (G.phase === 'roll') prompt.innerHTML = 'サイコロを振って移動しよう。';
-  else if (G.phase === 'pick') prompt.innerHTML = `<span class="em">${G.roll}</span> 歩ちょうどで行けるマスを選んでください。`;
+  else if (G.phase === 'pick') {
+    prompt.innerHTML = `<span class="em">${G.roll}</span> 歩ちょうどで行けるマスを選んでください。`;
+    if (REROLL > 0 && G.roll <= REROLL) prompt.innerHTML += `<br><span class="note">出目が ${REROLL} 以下なので「振り直す」も選べます。</span>`;
+  }
   else if (G.phase === 'done') {
     let msg = G.newCross.length > 0
       ? `<span class="em">✦ 交差を発見！</span> 相手の直前の道と ${G.newCross.length} マスで重なった。`
@@ -473,7 +481,7 @@ function renderButtons() {
 }
 
 /* ===== 手番の進行 ===== */
-$('btn-roll').onclick = () => {
+function doRoll() {
   G.dice = [];
   let sum = 0;
   for (let i = 0; i < NDICE; i++) {
@@ -481,16 +489,20 @@ $('btn-roll').onclick = () => {
     G.dice.push(d); sum += d;
   }
   G.roll = sum;
+  G.sel = null;
+  G.selPath = null;
   G.reach = reachableSet(G.positions[G.pi], sum);
   if (G.reach.length === 0) {
-    // 7×7・2d4では起きないが保険
+    // 7×7、2d4では起きないが保険
     G.phase = 'done';
     G.newCross = [];
   } else {
     G.phase = 'pick';
   }
   renderTurn();
-};
+}
+$('btn-roll').onclick = doRoll;
+$('btn-reroll').onclick = doRoll;
 
 function pickCell(cell) {
   G.sel = cell;
