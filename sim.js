@@ -49,6 +49,26 @@
  *              censormax=検閲する交差マスを belief 崩壊まで実評価して選ぶ（否定的結果=censorと同等）
  *              acensor=afocal の焦点封鎖を基本に、F近傍で交差を兼ねるマスがあれば検閲を上乗せ
  *              censorpure=検閲だけに全振り（焦点封鎖しないので focal に無力＝一辺倒の悪例）
+ *              以下は実験19（人間キングの「分断」戦略の定式化）:
+ *              sever=★採用・分断キング。検閲（発生済みヒントの抹消）を最優先し、無ければ
+ *                    belief操舵（mover の belief で着地選択を正確に再現し、最善応答後の
+ *                    対相手期待距離を最大化するマスに置く）。布石は afocal 式（非対称・中心毒殺）。
+ *                    censor を全列（対greedy・対focal・全ダイス）で上回る新・本命
+ *              bmmx=sever の操舵成分の単体（検閲優先なし。アブレーション用）
+ *              adapt=着地履歴で約束事型/推理型を分類しフォールバックを afocal/bmmx で切替
+ *                    （sever に全列で支配される＝分類は不要だった）
+ *              severm=sever の操舵の前に射程内の堀（moat）を挟む合成。対focalは最強（12〜14%）
+ *                    だが対greedyで sever に劣る＝シーカー最善応答に対しては sever が上
+ *              以下は素朴な定式化（シーカーの最善応答 greedy に対して censor を上回れないか
+ *              （cmoat のみ僅差で超える）、いずれも sever に支配される＝記録と再現用に残置）:
+ *              split=相手の直前軌跡（＝交差ヒントの発生源）のうち mover に最も近いマスを
+ *                    動く前に塞ぐ＝交差の発生を上流で断つ。布石・フォールバックは choke（分断壁）
+ *              splitc=検閲を最優先し、無ければ split の上流遮断
+ *              split2=検閲→差し迫った交差の予防（--sgate=距離ゲート、既定3）→afocal の三段
+ *              splitwall=mover と相手軌跡の間に min-cut の壁を築く（「向かわせない」の壁版）
+ *              herd/cherd=mover の予測最善着地を先回り封鎖（cherd は検閲優先）
+ *              mmx/cmmx=1手先読み: 対相手期待距離最大化の操舵の belief なし版（cmmx は検閲優先）
+ *              moat/cmoat=相手の隣接マス（最終進入路）を塞ぐ堀でラストワンマイルを直接遮断
  *              以下は実験11の読み合い用: cagecenter=常に中心を毒す / predict=プレイヤーの
  *              集合戦略 pfocal を読んで先回り / spread=メニューを日ごとに巡回してヘッジ
  *   --pfocal : プレイヤーの集合戦略 center | rotate | wander（省略時 center。実験11）。
@@ -58,6 +78,8 @@
  *   --jcap   : デブリ総数の上限（省略時 実質無制限=毎移動1個）
  *   --jinit  : 開始前の布石数。各盤の内側（外周を除く）に jinit 個ずつ置く（合計 2×jinit、
  *              省略時 0）。N=0〜3 の難易度レバー。外周は詰み防止で禁止。
+ *   --sgate  : split2 の距離ゲート。mover から相手軌跡までの距離がこれ以下のときだけ
+ *              軌跡の入口を塞ぐ（省略時 3）。実験19の感度分析用。
  *   --matrix : 第5節の実験マトリクス＋ε感度＋focal＋おじゃまを一括実行
  *
  * 例: node sim.js 10000 2d6 7 7 1 --policy=greedy --share
@@ -179,6 +201,9 @@ class Board {
     this.diceProbs = diceProbs(dice.n, dice.f, dice.reroll || 0);
     this.minRoll = dice.n * ((dice.reroll || 0) + 1);
     this.maxRoll = dice.n * dice.f;
+    let er = 0;
+    for (let s = 0; s < this.diceProbs.length; s++) er += s * this.diceProbs[s];
+    this.expRoll = Math.max(this.minRoll, Math.min(this.maxRoll, Math.round(er)));
     this.Ts = [];
     this.Tmix = new Float64Array(this.size * this.size);
     for (let s = 0; s <= this.maxRoll; s++) this.Ts.push(null);
@@ -372,8 +397,10 @@ function cageAround(board, blocked, M, posA, posB, rng) {
 
 // デブリ1個の配置先を決める。戻り値 { cell, target }（cell<0なら配置不能）
 // crossHints: target がこの手番の頭に見るはずの交差マス群（censor 系用・省略可）。
-// censorInfo: censormax 用の評価コンテキスト { belief, lastPath, subjectRoll, trueOpp }（省略可）。
-function ojamaPlace(board, cfg, blocks, posA, posB, mover, rng, day, crossHints, censorInfo) {
+// censorInfo: censormax / bmmx 用の評価コンテキスト { belief, lastPath, subjectRoll, trueOpp }（省略可）。
+// oppTrail:   target の相手の直前経路（split 系用・省略可）。
+// intel:      adapt 用の mover 挙動観測 { moves, centerHits }（省略可）。
+function ojamaPlace(board, cfg, blocks, posA, posB, mover, rng, day, crossHints, censorInfo, oppTrail, intel) {
   const priv = cfg.jvariant === 'private';
   // 秘匿型の標的: 「今動いた側」の盤に交互に置く
   const target = priv ? mover : 0; // shared は blocks[0]===blocks[1]
@@ -404,6 +431,78 @@ function ojamaPlace(board, cfg, blocks, posA, posB, mover, rng, day, crossHints,
   }
   // censorpure: 検閲だけに全振り（無ければ choke へ）。焦点封鎖をしないので focal に無力＝一辺倒の悪例
   else if (cfg.ojama === 'censorpure') cell = censorCell(board, blockedArr, crossHints, opp);
+  // split: 素朴な分断（実験19・否定的結果）。相手の直前軌跡＝情報の発生源を上流で塞ぐ。無ければ choke（分断壁）へ
+  else if (cfg.ojama === 'split') cell = splitCell(board, blockedArr, from, to, oppTrail);
+  // splitc: 検閲（発生済みヒントの抹消）を最優先し、無ければ split の上流遮断
+  else if (cfg.ojama === 'splitc') {
+    cell = censorCell(board, blockedArr, crossHints, opp);
+    if (cell < 0) cell = splitCell(board, blockedArr, from, to, oppTrail);
+  }
+  // split2: 三段ハイブリッド。①発生済みヒントの検閲 → ②交差が差し迫っていれば
+  // （mover から相手軌跡までの距離 ≤ sgate）軌跡の入口を塞いで予防 → ③afocal で焦点毒殺。
+  // 情報飢餓（①②）と、盲目greedyの中心収束を罰する③を1本の優先順位に束ねる。
+  else if (cfg.ojama === 'split2') {
+    cell = censorCell(board, blockedArr, crossHints, opp);
+    if (cell < 0) {
+      const gate = cfg.sgate != null ? cfg.sgate : 3;
+      const sc = splitCell(board, blockedArr, from, to, oppTrail);
+      if (sc >= 0 && board.d(sc, from) <= gate) cell = sc;
+    }
+    if (cell < 0) cell = afocalCell(board, blockedArr, posA, posB, target, false);
+  }
+  // splitwall: mover と相手軌跡の間に壁を築く（軌跡への min-cut）
+  else if (cfg.ojama === 'splitwall') cell = splitWallCell(board, blockedArr, from, to, oppTrail);
+  // herd: mover の予測最善着地（期待出目で相手に最も寄れるマス）を先回りして塞ぐ操舵
+  else if (cfg.ojama === 'herd') cell = herdCell(board, blockedArr, from, to, board.expRoll);
+  // cherd: 検閲を最優先し、無ければ herd の操舵
+  else if (cfg.ojama === 'cherd') {
+    cell = censorCell(board, blockedArr, crossHints, opp);
+    if (cell < 0) cell = herdCell(board, blockedArr, from, to, board.expRoll);
+  }
+  // mmx: 1手先読みミニマックス（mover の最善応答後の対相手期待距離を最大化する操舵）
+  else if (cfg.ojama === 'mmx') cell = minimaxCell(board, blockedArr, from, to, crossHints);
+  // bmmx: belief版1手先読み（mover の実際の着地選択を belief で再現して読む）
+  else if (cfg.ojama === 'bmmx') {
+    cell = censorInfo ? beliefMinimaxCell(board, blockedArr, from, to, censorInfo.belief, crossHints) : -1;
+    if (cell < 0) cell = minimaxCell(board, blockedArr, from, to, crossHints);
+  }
+  // sever: ★採用・分断キング（実験19）。検閲を最優先し、無ければ bmmx の belief操舵
+  else if (cfg.ojama === 'sever') {
+    cell = censorCell(board, blockedArr, crossHints, opp);
+    if (cell < 0 && censorInfo) cell = beliefMinimaxCell(board, blockedArr, from, to, censorInfo.belief, crossHints);
+  }
+  // severm: sever の操舵の前に「射程内なら相手の最終進入路（堀）」を挟む合成の実験
+  else if (cfg.ojama === 'severm') {
+    cell = censorCell(board, blockedArr, crossHints, opp);
+    if (cell < 0 && board.d(from, to) <= board.maxRoll) cell = moatCell(board, blockedArr, from, to);
+    if (cell < 0 && censorInfo) cell = beliefMinimaxCell(board, blockedArr, from, to, censorInfo.belief, crossHints);
+  }
+  // adapt: 検閲は常に最優先（物理封鎖として約束事にも推理にも最強）。ヒントが無い手番の
+  // フォールバックだけを、mover の着地履歴の分類で afocal（約束事型）/ bmmx（推理型）に切り替える
+  else if (cfg.ojama === 'adapt') {
+    cell = censorCell(board, blockedArr, crossHints, opp);
+    if (cell < 0 && !adaptIsFocalish(intel) && censorInfo) {
+      cell = beliefMinimaxCell(board, blockedArr, from, to, censorInfo.belief, crossHints);
+    }
+    if (cell < 0) cell = afocalCell(board, blockedArr, posA, posB, target, false);
+  }
+  // moat: 射程内なら相手の最終進入路（隣接マス）を最優先で塞ぎ、それ以外は censor→afocal
+  else if (cfg.ojama === 'moat') {
+    if (board.d(from, to) <= board.maxRoll) cell = moatCell(board, blockedArr, from, to);
+    if (cell < 0) cell = censorCell(board, blockedArr, crossHints, opp);
+    if (cell < 0) cell = afocalCell(board, blockedArr, posA, posB, target, false);
+  }
+  // cmoat: 検閲を最優先し、無ければ射程内の堀、それも無ければ afocal
+  else if (cfg.ojama === 'cmoat') {
+    cell = censorCell(board, blockedArr, crossHints, opp);
+    if (cell < 0 && board.d(from, to) <= board.maxRoll) cell = moatCell(board, blockedArr, from, to);
+    if (cell < 0) cell = afocalCell(board, blockedArr, posA, posB, target, false);
+  }
+  // cmmx: 検閲を最優先し、無ければ mmx の操舵
+  else if (cfg.ojama === 'cmmx') {
+    cell = censorCell(board, blockedArr, crossHints, opp);
+    if (cell < 0) cell = minimaxCell(board, blockedArr, from, to, crossHints);
+  }
   // acensor: afocal の焦点封鎖を基本に、F 近傍で交差を兼ねるマスがあれば検閲を上乗せ（併用）
   else if (cfg.ojama === 'acensor') cell = afocalCensorCell(board, blockedArr, posA, posB, target, crossHints);
   // 読み合い用のおじゃま:
@@ -419,7 +518,10 @@ function ojamaPlace(board, cfg, blocks, posA, posB, mover, rng, day, crossHints,
   if (cfg.ojama === 'choke' || ((cfg.ojama === 'cage' || cfg.ojama === 'predict' ||
       cfg.ojama === 'cagecenter' || cfg.ojama === 'spread' || cfg.ojama === 'afocal' ||
       cfg.ojama === 'censor' || cfg.ojama === 'acensor' || cfg.ojama === 'censorpure' ||
-      cfg.ojama === 'censormax') && cell < 0)) {
+      cfg.ojama === 'censormax' || cfg.ojama === 'split' || cfg.ojama === 'splitc' ||
+      cfg.ojama === 'split2' || cfg.ojama === 'bmmx' || cfg.ojama === 'sever' || cfg.ojama === 'severm' ||
+      cfg.ojama === 'moat' || cfg.ojama === 'cmoat' || cfg.ojama === 'splitwall' || cfg.ojama === 'adapt' ||
+      cfg.ojama === 'herd' || cfg.ojama === 'cherd' || cfg.ojama === 'mmx' || cfg.ojama === 'cmmx') && cell < 0)) {
     if (!dumb) cell = chokeCell(board, blockedArr, from, to, rng);
   }
   if (cell < 0) {
@@ -592,6 +694,185 @@ function afocalCensorCell(board, blockedArr, posA, posB, target, crossHints) {
     if (score < bScore) { bScore = score; best = q; }
   }
   return best;
+}
+
+/* ===================== split: 軌跡の分断・素朴版（人間キング発の上流遮断・実験19） =====================
+ * 人間キングのプレイテスト所見「相手が直前にたどった軌跡に向かわせないように分断させる」の定式化。
+ * censor が「発生した交差ヒントを事後に1マス消す」対症療法なのに対し、split は
+ * 「交差＝情報の発生そのものを上流で断つ」。手番冒頭（mover が動く前）に、相手の直前軌跡
+ * （＝mover の今手番の経路がそこを踏むと、相手の次ヒント＝相手直前経路∩mover経路 が生まれる
+ * 情報源）のうち、mover が最初に踏み込みやすいマス＝mover に最も近い軌跡マスを塞ぐ。
+ *  (a) mover はその軌跡マスを通れず交差が生まれにくい（相手の次ヒントの予防）
+ *  (b) 塞いだマスが mover の直前経路とも重なっていれば、現行ヒントの検閲（censor）を兼ねる
+ *  (c) デブリは永続なので、相手の行動圏の縁に沿って壁＝分断線が育ち、物理的にも二人を隔てる
+ * タイブレークは相手に近い側（より強い位置手がかりを優先的に潰し、相手の周りの堀を締める）。
+ */
+function splitCell(board, blockedArr, moverPos, oppPos, oppTrail) {
+  if (!oppTrail || oppTrail.length === 0) return -1;
+  let best = -1, bd = Infinity, bo = Infinity;
+  for (const c of oppTrail) {
+    if (blockedArr[c] || c === moverPos || c === oppPos) continue;
+    const dP = board.d(c, moverPos), dO = board.d(c, oppPos);
+    if (dP < bd || (dP === bd && dO < bo)) { bd = dP; bo = dO; best = c; }
+  }
+  return best;
+}
+
+// herd（操舵）: mover の「予測最善着地」（期待出目 E で到達できるマスのうち相手に最も近いマス
+// ＝greedy の代理モデル）を先回りして塞ぐ。毎手番 mover の狙い筋を1マスずつ潰すので、
+// デブリが mover の進行レーンに沿って壁として育つ＝「向かわせない」操舵の素朴な定式化。
+function herdCell(board, blockedArr, moverPos, oppPos, expRoll) {
+  const layers = computeLayers(board, moverPos, expRoll, blockedArr);
+  const Lk = layers[expRoll];
+  let best = -1, bd = Infinity;
+  for (let q = 0; q < board.size; q++) {
+    if (!Lk[q] || blockedArr[q] || q === moverPos || q === oppPos) continue;
+    const d = board.d(q, oppPos);
+    if (d < bd) { bd = d; best = q; }
+  }
+  return best;
+}
+
+// mmx（1手先読みミニマックス）: 各候補マス c にデブリを置いた場合の
+// 「mover の最善応答後の対相手距離の期待値」 V(c) = Σ_s p(s)・min_{L∈reach(P,s,B∪{c})} d(L,O)
+// を実際に計算し、V を最大化する c を選ぶ＝mover を最も相手から遠ざける操舵。
+// greedy シーカーの目的関数（相手への接近）を代理モデルとして敵対的に1手読む。
+// タイブレークは検閲を兼ねるマス（発生済み交差ヒント）を優先。
+function minimaxCell(board, blockedArr, moverPos, oppPos, crossHints) {
+  const size = board.size;
+  const D = board.d(moverPos, oppPos);
+  const hintSet = (crossHints && crossHints.length) ? new Set(crossHints) : null;
+  // 候補: mover の到達圏内かつ二人の回廊近傍（＋発生済みヒントマス）に絞って計算量を抑える
+  const cands = [];
+  for (let q = 0; q < size; q++) {
+    if (blockedArr[q] || q === moverPos || q === oppPos) continue;
+    const onCorridor = board.d(q, moverPos) + board.d(q, oppPos) <= D + 2;
+    const inReach = board.d(q, moverPos) <= board.maxRoll;
+    if ((inReach && onCorridor) || (hintSet && hintSet.has(q))) cands.push(q);
+  }
+  if (cands.length === 0) return -1;
+  const trial = Uint8Array.from(blockedArr);
+  let best = -1, bs = -Infinity;
+  for (const c of cands) {
+    trial[c] = 1;
+    const layers = computeLayers(board, moverPos, board.maxRoll, trial);
+    let v = 0;
+    for (let s = board.minRoll; s <= board.maxRoll; s++) {
+      const ps = board.diceProbs[s];
+      if (!ps) continue;
+      const Lk = layers[s];
+      let md = D; // 動けない出目なら現状距離のまま
+      let any = false;
+      for (let q = 0; q < size; q++) {
+        if (!Lk[q]) continue;
+        const d = board.d(q, oppPos);
+        if (!any || d < md) { md = d; any = true; }
+      }
+      v += ps * md;
+    }
+    trial[c] = 0;
+    const score = v * 100 + (hintSet && hintSet.has(c) ? 1 : 0); // 同値なら検閲を兼ねる方
+    if (score > bs) { bs = score; best = c; }
+  }
+  return best;
+}
+
+// splitwall（軌跡への壁）: 「mover を相手の軌跡に向かわせない」の min-cut 版。
+// 相手の直前軌跡全体を多源BFSの目標集合とし、mover→軌跡の最短経路DAGの細い断面を
+// mover 寄りから塞ぐ＝軌跡と mover の間に壁を築く。軌跡に隣接済みなら入口マスを直接塞ぐ。
+function splitWallCell(board, blockedArr, moverPos, oppPos, oppTrail) {
+  if (!oppTrail || oppTrail.length === 0) return -1;
+  const size = board.size;
+  const dF = bfsDist(board, moverPos, blockedArr);
+  const dT = new Int16Array(size).fill(-1);
+  const q = new Int16Array(size);
+  let h = 0, t = 0;
+  for (const c of new Set(oppTrail)) if (!blockedArr[c] && dT[c] < 0) { dT[c] = 0; q[t++] = c; }
+  while (h < t) {
+    const u = q[h++];
+    for (const v of board.nbrs[u]) if (dT[v] < 0 && !blockedArr[v]) { dT[v] = dT[u] + 1; q[t++] = v; }
+  }
+  let D = Infinity;
+  for (const c of new Set(oppTrail)) if (dF[c] >= 0 && dF[c] < D) D = dF[c];
+  if (!Number.isFinite(D) || D <= 1) return splitCell(board, blockedArr, moverPos, oppPos, oppTrail);
+  const width = new Int16Array(D + 1);
+  for (let x = 0; x < size; x++) {
+    if (x === moverPos || x === oppPos) continue;
+    if (dF[x] > 0 && dT[x] > 0 && dF[x] + dT[x] === D) width[dF[x]]++;
+  }
+  let best = -1, bs = -Infinity;
+  for (let x = 0; x < size; x++) {
+    if (x === moverPos || x === oppPos || blockedArr[x]) continue;
+    if (dF[x] <= 0 || dT[x] <= 0 || dF[x] + dT[x] !== D) continue;
+    const s = -100 * width[dF[x]] - dF[x]; // 細い断面優先・mover寄り
+    if (s > bs) { bs = s; best = x; }
+  }
+  return best;
+}
+
+// moat（堀）: 同マス着地には「相手の現在マスへ隣接マスから進入する」ことが必要。
+// mover が今手番で相手に届きうる（D ≤ maxRoll）とき、相手の空き隣接マスのうち
+// mover に最も近い側＝最終進入路を塞ぐ。相手の周りに堀が育つと mover は相手マスに
+// 物理的に着地できなくなる（ラストワンマイルの直接遮断）。
+function moatCell(board, blockedArr, moverPos, oppPos) {
+  let best = -1, bd = Infinity;
+  for (const q of board.nbrs[oppPos]) {
+    if (blockedArr[q] || q === moverPos) continue;
+    const d = board.d(q, moverPos);
+    if (d < bd) { bd = d; best = q; }
+  }
+  return best;
+}
+
+// bmmx（belief版1手先読み）: 全知キングが mover の belief（censormax と同じ正当な全知
+// コンテキスト）で greedy の着地選択そのものを再現し、各候補デブリに対する mover の
+// 最善応答着地 L* を正確に予測。真の相手位置との事後距離 E_s[d(L*, O)] を最大化する
+// マスに置く＝「mover が実際に向かう先」を読んで最も遠回りさせる操舵。
+function beliefMinimaxCell(board, blockedArr, moverPos, oppPos, belief, crossHints) {
+  if (!belief) return -1;
+  const size = board.size;
+  const D = board.d(moverPos, oppPos);
+  const hintSet = (crossHints && crossHints.length) ? new Set(crossHints) : null;
+  const sc = new Float64Array(size);
+  for (let L = 0; L < size; L++) sc[L] = WIN_WEIGHT * belief[L] - expectedDist(board, belief, L);
+  const cands = [];
+  for (let q = 0; q < size; q++) {
+    if (blockedArr[q] || q === moverPos || q === oppPos) continue;
+    const onCorridor = board.d(q, moverPos) + board.d(q, oppPos) <= D + 2;
+    const inReach = board.d(q, moverPos) <= board.maxRoll;
+    if ((inReach && onCorridor) || (hintSet && hintSet.has(q))) cands.push(q);
+  }
+  if (cands.length === 0) return -1;
+  const trial = Uint8Array.from(blockedArr);
+  let best = -1, bs = -Infinity;
+  for (const c of cands) {
+    trial[c] = 1;
+    const layers = computeLayers(board, moverPos, board.maxRoll, trial);
+    let v = 0;
+    for (let s = board.minRoll; s <= board.maxRoll; s++) {
+      const ps = board.diceProbs[s];
+      if (!ps) continue;
+      const Lk = layers[s];
+      let bl = -1, bsc = -Infinity;
+      for (let q = 0; q < size; q++) {
+        if (Lk[q] && sc[q] > bsc) { bsc = sc[q]; bl = q; }
+      }
+      v += ps * (bl >= 0 ? board.d(bl, oppPos) : D);
+    }
+    trial[c] = 0;
+    const score = v * 100 + (hintSet && hintSet.has(c) ? 1 : 0);
+    if (score > bs) { bs = score; best = c; }
+  }
+  return best;
+}
+
+// adapt（適応キング）: mover の過去の着地から戦略クラスを推定して妨害を切り替える。
+// 「毎回、到達集合の中で最も中心に近いマスに着地する」率が高い＝約束事(focal)型
+// → afocal（非対称の焦点毒殺）で刈る。そうでなければ推理(greedy)型
+// → censor（検閲）→ bmmx（belief操舵）で情報を断ちつつ遠回りさせる。
+// 全知キングの正当な観測（相手の着地履歴）だけを使い、シーカーの内部方策は覗かない。
+function adaptIsFocalish(intel) {
+  return intel && intel.moves >= 2 && intel.centerHits === intel.moves;
 }
 
 // 相手の盤に置かれたであろう k 個のデブリを、おじゃまの方策から静的に推定する
@@ -889,6 +1170,7 @@ function playGame(board, cfg, rng) {
     moved: false,
     belief: policy !== 'random' ? makeBelief(board, pos, minDist) : null,
     focalTarget: center,                     // xfocal: 共有集合点（交差で更新）。focalx: 中心固定
+    moves: 0, centerHits: 0,                 // adapt キング用の挙動観測（中心最寄り着地の回数）
   });
   const players = [mkPlayer(a), mkPlayer(b)];
   players[0].stamp[a] = 0;
@@ -911,7 +1193,12 @@ function playGame(board, cfg, rng) {
     if (!jOn || debrisCount >= jcap) return;
     // 検閲候補: nextMover が手番の頭に見るはずの交差マス（precross 時のみ意味を持つ）。
     // 全知キングは両者の直前経路を知るので、その交差の上にデブリを置けばヒントを検閲できる。
-    let crossHints = null, censorInfo = null;
+    let crossHints = null, censorInfo = null, oppTrail = null;
+    // split 系: 相手（＝nextMover の対面）の直前軌跡が「情報の発生源」。全知キングは常に見える。
+    if (cfg.ojama === 'split' || cfg.ojama === 'splitc' || cfg.ojama === 'split2' || cfg.ojama === 'splitwall') {
+      const op = players[1 - nextMover];
+      if (op.moved) oppTrail = op.lastPathCells;
+    }
     if (cfg.precross && policy !== 'random') {
       const me = players[nextMover], op = players[1 - nextMover];
       if (me.moved && op.moved) {
@@ -919,8 +1206,8 @@ function playGame(board, cfg, rng) {
         const arr = blocks[nextMover];
         crossHints = [];
         for (const x of me.lastPathCells) if (opSet.has(x) && !arr[x]) crossHints.push(x);
-        // censormax 用: belief 崩壊を評価するための全知コンテキスト
-        if (cfg.ojama === 'censormax') {
+        // censormax / bmmx / adapt 用: belief を評価するための全知コンテキスト
+        if (cfg.ojama === 'censormax' || cfg.ojama === 'bmmx' || cfg.ojama === 'sever' || cfg.ojama === 'adapt' || cfg.ojama === 'severm') {
           censorInfo = {
             belief: me.belief,
             lastPath: me.lastPathCells,
@@ -930,7 +1217,10 @@ function playGame(board, cfg, rng) {
         }
       }
     }
-    const { cell, target } = ojamaPlace(board, cfg, blocks, players[0].pos, players[1].pos, nextMover, rng, curDay, crossHints, censorInfo);
+    const intel = cfg.ojama === 'adapt'
+      ? { moves: players[nextMover].moves, centerHits: players[nextMover].centerHits }
+      : null;
+    const { cell, target } = ojamaPlace(board, cfg, blocks, players[0].pos, players[1].pos, nextMover, rng, curDay, crossHints, censorInfo, oppTrail, intel);
     if (cell >= 0) { blocks[target][cell] = 1; debrisCount++; debrisPer[target]++; }
   };
   // 事前配置（布石）: 全知おじゃまは開始位置を見てから、1日目の前にデブリを置ける。
@@ -954,7 +1244,8 @@ function playGame(board, cfg, rng) {
           continue;
         }
         // 布石は交差ヒントが未発生なので censor 系も afocal と同じ焦点予測配置を使う
-        const afocalOpening = cfg.ojama === 'afocal' || cfg.ojama === 'censor' || cfg.ojama === 'acensor' || cfg.ojama === 'censormax';
+        const afocalOpening = cfg.ojama === 'afocal' || cfg.ojama === 'censor' || cfg.ojama === 'acensor' || cfg.ojama === 'censormax' ||
+          cfg.ojama === 'adapt' || cfg.ojama === 'bmmx' || cfg.ojama === 'sever' || cfg.ojama === 'moat' || cfg.ojama === 'cmoat' || cfg.ojama === 'severm';
         let cell = afocalOpening
           ? afocalCell(board, arr, players[0].pos, players[1].pos, t, true)
           : cfg.jasym
@@ -1064,6 +1355,26 @@ function playGame(board, cfg, rng) {
       }
       const mv = chooseMove(board, me, roll, day, maxDay, policy, rng, cfg.eps || 0, reach, sampler, myBlocks, awareInfo, cfg);
       const landing = mv.landing, path = mv.path;
+
+      // adapt キング用の挙動観測（約束事の指紋）: focal の決定的な目標（中心、自盤で塞がれて
+      // いれば中心に最も近い空きマス）をキング側で再現し、「その目標に最も寄る着地」だったかを
+      // 記録する。focal なら定義上毎回一致（rate=1.0）、greedy は belief 次第でしか一致しない。
+      if (cfg.ojama === 'adapt') {
+        let goal = center;
+        if (myBlocks && myBlocks[goal]) {
+          let bg = goal, bd = Infinity;
+          for (let q = 0; q < size; q++) {
+            if (myBlocks[q]) continue;
+            const d = board.d(q, goal);
+            if (d < bd) { bd = d; bg = q; }
+          }
+          goal = bg;
+        }
+        let bdc = Infinity;
+        for (const L of reach) { const d = board.d(L, goal); if (d < bdc) bdc = d; }
+        if (board.d(landing, goal) === bdc) me.centerHits++;
+        me.moves++;
+      }
 
       // 交差判定（相手の減衰内スタンプとの重なり）。segment=移動で踏んだマス（出発マスは除く）
       const segment = path.slice(1);
@@ -1266,6 +1577,7 @@ function main() {
     else if (a.startsWith('--jvariant=')) flags.jvariant = a.slice(11);
     else if (a.startsWith('--jcap=')) flags.jcap = +a.slice(7);
     else if (a.startsWith('--jinit=')) flags.jinit = +a.slice(8);
+    else if (a.startsWith('--sgate=')) flags.sgate = +a.slice(8);
     else if (a === '--jasym') flags.jasym = true;
     else if (a === '--jinterior') flags.jinterior = true;
     else if (a === '--jdump') flags.jdump = true;
@@ -1304,6 +1616,7 @@ function main() {
         share: !!flags.share, oppModel: flags.opp || 'random', seed: flags.seed || 12345,
         eps: flags.eps || 0, jeps: flags.jeps || 0,
         ojama: flags.ojama || 'none', jvariant: flags.jvariant || 'shared', jcap: flags.jcap, jinit: flags.jinit || 0,
+        sgate: flags.sgate,
         aware: flags.aware || null, sharedCross: !!flags.sharedCross,
         precross: !!flags.precross,
         noday1: !!flags.noday1,
