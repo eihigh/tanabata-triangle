@@ -48,6 +48,15 @@
  *   --jcap   : デブリ総数の上限（省略時 実質無制限=毎移動1個）
  *   --jinit  : 開始前の布石数。各盤の内側（外周を除く）に jinit 個ずつ置く（合計 2×jinit、
  *              省略時 0）。N=0〜3 の難易度レバー。外周は詰み防止で禁止。
+ *   --jjam=R : ジャム（妨害電波）ルール実験（実験16）。自分の盤のデブリから距離R以内の
+ *              マスでは交差ヒントが開示されず、クリア情報（相手は通っていない）も得られない。
+ *              自分のデブリは見えるので「情報が出ない場所」は自分で分かる＝推理は健全なまま
+ *              情報だけが痩せる。※交差マスは定義上「両盤で通行可能なマス」に限られるため、
+ *              半径0（デブリマスそのもの）は現行ルールでは無効。R>=1 で初めて意味を持つ。
+ *   --jjamx=R: 秘匿ジャム。両盤のデブリの周囲Rが霧になるが、相方の盤ぶんの霧は自分には
+ *              見えない。見えない霧で握り潰された交差を、プレイヤーは「交差なし＝相手は
+ *              通っていない」と誤読する＝負の情報が汚染される。キングの置き方が直接
+ *              「推理を難しくする」攻撃になるルール案。
  *   --matrix : 第5節の実験マトリクス＋ε感度＋focal＋おじゃまを一括実行
  *
  * 例: node sim.js 10000 2d6 7 7 1 --policy=greedy --share
@@ -242,6 +251,19 @@ function bfsDist(board, from, blocked) {
     }
   }
   return d;
+}
+
+// ジャム（--jjam/--jjamx・実験16）: デブリから距離R以内の「霧」マスク。
+// 霧のマスでは交差ヒントが開示されず、クリア情報も確定しない。
+function fogMask(board, arrs, R) {
+  const fog = new Uint8Array(board.size);
+  for (const arr of arrs) {
+    for (let q = 0; q < board.size; q++) {
+      if (!arr[q]) continue;
+      for (let x = 0; x < board.size; x++) if (board.d(q, x) <= R) fog[x] = 1;
+    }
+  }
+  return fog;
 }
 
 /* ===================== おじゃま係AI ===================== */
@@ -848,6 +870,16 @@ function playGame(board, cfg, rng) {
       const roll = rollDice();
       const myBlocks = jOn ? blocks[pi] : null;
 
+      // ジャム（実験16）: trueFog=ヒント抑制に使う霧、ownFog=自分に見える霧（自分の盤のみ）。
+      // --jjam は trueFog==ownFog（健全な情報遮断）。--jjamx は相方の盤の霧も抑制に効くが
+      // 自分には見えない＝握り潰された交差を「クリア」と誤読する（負の情報の汚染）。
+      let trueFog = null, ownFog = null;
+      const jamR = cfg.jjamx || cfg.jjam || 0;
+      if (jOn && jamR > 0 && debrisCount > 0) {
+        ownFog = fogMask(board, [myBlocks], jamR);
+        trueFog = cfg.jjamx ? fogMask(board, [...new Set(blocks)], jamR) : ownFog;
+      }
+
       // 到達集合と経路サンプラ（デブリがあれば層状DP、なければ高速な事前計算）
       let reach, layers = null;
       if (jOn && debrisCount > 0) {
@@ -866,10 +898,14 @@ function playGame(board, cfg, rng) {
       // 手番冒頭で belief を更新してから着地を選ぶ（既定の post-move 交差は下でスキップ）。
       if (cfg.precross && policy !== 'random' && me.moved && op.moved) {
         const opSet = new Set(op.lastPathCells);
-        const preCross = [];
-        for (const x of me.lastPathCells) if (opSet.has(x)) preCross.push(x);
-        const uniqPre = [...new Set(preCross)];
-        const preClear = [...new Set(me.lastPathCells)]; // 自分の直前経路で交差しなかったマス＝相手は通っていない
+        // ジャムあり: trueFog内の交差は開示されない。ownFog内は情報なし（プレイヤーが承知）。
+        // jjamxでは「trueFogで潰れたがownFog外」の交差がpreClearに落ちる＝誤った負の情報。
+        const uniqPre = [], preClear = [];
+        for (const x of new Set(me.lastPathCells)) {
+          const crossed = opSet.has(x);
+          if (crossed && !(trueFog && trueFog[x])) uniqPre.push(x);
+          else if (!(ownFog && ownFog[x])) preClear.push(x);
+        }
         const opBlocksKnown = (cfg.aware === 'dist' && jOn && cfg.jvariant !== 'private' && debrisCount > 0)
           ? blocks[1 - pi] : null;
         observeBelief(
@@ -911,8 +947,10 @@ function playGame(board, cfg, rng) {
         if (hit) crosses.push(x);
       }
       const uniqCross = [...new Set(crosses)];
-      crossCellsTotal += uniqCross.length;
-      if (uniqCross.length > 0) anyCross = true;
+      // ジャムあり: 霧内の交差はヒントとして開示されない（統計も開示ベースで数える）
+      const discCross = trueFog ? uniqCross.filter((x) => !trueFog[x]) : uniqCross;
+      crossCellsTotal += discCross.length;
+      if (discCross.length > 0) anyCross = true;
 
       // 自分の軌跡スタンプと移動
       for (const x of path) me.stamp[x] = turn;
@@ -948,12 +986,14 @@ function playGame(board, cfg, rng) {
         //     着地マスに相手はいない（勝利していないので）。
         //     ※ --precross のときは手番冒頭で更新済みなので post-move の更新はスキップする。
         if (!cfg.precross) {
-          const myClear = [...new Set(segment)]; // 交差マス以外の踏破マスは相手経路に含まれない
+          // 交差マス以外の踏破マスは相手経路に含まれない（ownFog内は情報なしとして除外。
+          // jjamxで握り潰された交差はここに残る＝誤った負の情報）
+          const myClear = [...new Set(segment)].filter((x) => !(ownFog && ownFog[x]));
           // 認識AI('dist')＋共有型: 相手も同じ壁を通れないので、交差からの尤度をBFS距離で締める
           const opBlocksKnown = (cfg.aware === 'dist' && jOn && cfg.jvariant !== 'private' && debrisCount > 0)
             ? blocks[1 - pi] : null;
           observeBelief(
-            board, me.belief, uniqCross, myClear,
+            board, me.belief, discCross, myClear,
             share ? op.lastRoll : null, op.moved, opBlocksKnown
           );
           me.belief[me.pos] = 0;
@@ -1087,6 +1127,8 @@ function main() {
     else if (a.startsWith('--jvariant=')) flags.jvariant = a.slice(11);
     else if (a.startsWith('--jcap=')) flags.jcap = +a.slice(7);
     else if (a.startsWith('--jinit=')) flags.jinit = +a.slice(8);
+    else if (a.startsWith('--jjam=')) flags.jjam = +a.slice(7);
+    else if (a.startsWith('--jjamx=')) flags.jjamx = +a.slice(8);
     else if (a === '--jfocus') flags.jfocus = true;
     else if (a === '--jasym') flags.jasym = true;
     else if (a === '--jdump') flags.jdump = true;
@@ -1123,11 +1165,12 @@ function main() {
         share: !!flags.share, oppModel: flags.opp || 'random', seed: flags.seed || 12345,
         eps: flags.eps || 0,
         ojama: flags.ojama || 'none', jvariant: flags.jvariant || 'shared', jcap: flags.jcap, jinit: flags.jinit || 0,
+        jjam: flags.jjam || 0, jjamx: flags.jjamx || 0,
         jfocus: !!flags.jfocus, aware: flags.aware || null, sharedCross: !!flags.sharedCross,
         precross: !!flags.precross,
         pfocal: flags.pfocal || 'center', jasym: !!flags.jasym, jdump: !!flags.jdump,
       };
-      const jl = cfg.ojama !== 'none' ? ` 邪魔${cfg.ojama}-${cfg.jvariant}${cfg.jfocus ? '(集中)' : ''}${cfg.jcap != null ? `(上限${cfg.jcap})` : ''}${cfg.jinit ? `(布石${cfg.jinit}${cfg.jasym ? '非対称' : ''})` : ''}` : '';
+      const jl = cfg.ojama !== 'none' ? ` 邪魔${cfg.ojama}-${cfg.jvariant}${cfg.jfocus ? '(集中)' : ''}${cfg.jcap != null ? `(上限${cfg.jcap})` : ''}${cfg.jinit ? `(布石${cfg.jinit}${cfg.jasym ? '非対称' : ''})` : ''}${cfg.jjam ? `(ジャム${cfg.jjam})` : ''}${cfg.jjamx ? `(秘匿ジャム${cfg.jjamx})` : ''}` : '';
       const pl = cfg.pfocal && cfg.pfocal !== 'center' ? `[${cfg.pfocal}]` : '';
       const label = `${N}x${N} ${dice.label} ${maxDay}日 減衰${decay} ${policy}${pl}${cfg.aware ? `(認識${cfg.aware})` : ''}${cfg.eps ? `(ε=${cfg.eps})` : ''}${cfg.share ? '+出目' : ''}${cfg.precross ? '+先交差' : ''}${cfg.oppModel === 'greedy' ? ' oppV2' : ''}${jl}`;
       printResult(label, runCondition(cfg));
