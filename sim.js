@@ -16,8 +16,11 @@
  *   ダイス   : NdF 記法（例 2d6, 1d3）。カンマ区切りで複数可。数字のみなら 1dF。
  *   盤       : カンマ区切り（例 7 / 5,7,9）
  *   減衰     : 0=全軌跡, 1=直近1手番, ...
- *   --policy : random | greedy | infogain | hybrid | focal（省略時 random）
- *              focal=事前に示し合わせた収束点（盤の中心）へ向かうだけの「約束事」戦略
+ *   --policy : random | greedy | infogain | hybrid | focal | focalx | xfocal（省略時 random）
+ *              focal =事前に示し合わせた収束点（盤の中心）へ向かうだけの「約束事」戦略
+ *              focalx=focalに「交差で相手を掴む」を足した強化案（実験9。私的情報で逆に悪化）
+ *              xfocal=集合点を共有交差マスへ動かす（--sharedcross のときだけ機能。実験9）
+ *   --sharedcross : 反実仮想。交差を両者に開示する（既定は横切った側だけ）。実験9の天井測定用
  *   --share  : 出目の相互開示 on
  *   --opp    : belief 更新に使う相手移動モデル random(v1) | greedy(v2)（省略時 random）
  *   --eps    : 確率εで無情報（ランダム）に動く。人間の不完全さのモデル（省略時 0）
@@ -512,6 +515,21 @@ function chooseMove(board, me, roll, day, maxDay, mode, rng, eps, reach, sampler
     return { landing: best, path: sampler(best) };
   }
 
+  // focalx: 中心へ向かうfocalに「交差で相手が特定できたら奪う」を足す。
+  // 共有アンカー（中心）は動かさないので二人の同期は壊れず、ホバリングの膠着だけを崩す。
+  // xfocal: アンカー自体を共有交差マスへ動かす（cfg.sharedCross のときだけ機能）。
+  //   秘匿ルール（交差は横切った側だけが知る）では focalTarget は中心のまま＝focalに退化。
+  if (mode === 'focalx' || mode === 'xfocal') {
+    const goal = mode === 'xfocal' ? me.focalTarget : ((( board.N - 1) >> 1) * board.N + ((board.N - 1) >> 1));
+    let best = null, bs = -Infinity;
+    for (const L of reach) {
+      // 相手を掴む（着地=勝ち）を最優先、次にアンカーへの接近
+      const s = WIN_WEIGHT * me.belief[L] - board.d(L, goal) + rng() * 1e-6;
+      if (s > bs) { bs = s; best = L; }
+    }
+    return { landing: best, path: sampler(best) };
+  }
+
   const belief = me.belief;
   let best = null, bestScore = -Infinity;
 
@@ -578,6 +596,8 @@ function playGame(board, cfg, rng) {
   let a = per[(rng() * per.length) | 0], b;
   do { b = per[(rng() * per.length) | 0]; } while (board.d(a, b) < minDist);
 
+  const cc = (board.N - 1) >> 1;
+  const center = cc * board.N + cc;
   const mkPlayer = (pos) => ({
     pos,
     stamp: new Int32Array(size).fill(-1e9), // 各マスに最後に通った手番番号
@@ -585,10 +605,14 @@ function playGame(board, cfg, rng) {
     lastRoll: null,                          // 直近手番の出目（開示用）
     moved: false,
     belief: policy !== 'random' ? makeBelief(board, pos, minDist) : null,
+    focalTarget: center,                     // xfocal: 共有集合点（交差で更新）。focalx: 中心固定
   });
   const players = [mkPlayer(a), mkPlayer(b)];
   players[0].stamp[a] = 0;
   players[1].stamp[b] = 0;
+
+  // ラストワンマイル分解の計測
+  let minReach = board.d(a, b), firstClose2 = null, firstClose4 = null;
 
   // おじゃま係のデブリ盤。shared は同一配列を共有、private は各自の盤
   const jOn = cfg.ojama && cfg.ojama !== 'none';
@@ -681,9 +705,22 @@ function playGame(board, cfg, rng) {
       me.lastRoll = roll;
       me.moved = true;
 
+      // 近接の計測（ラストワンマイル分解用）
+      const dcur = board.d(me.pos, op.pos);
+      if (dcur < minReach) minReach = dcur;
+      if (firstClose2 === null && dcur <= 2) firstClose2 = day;
+      if (firstClose4 === null && dcur <= 4) firstClose4 = day;
+
+      // xfocal: 共有交差があれば集合点を「中心に最も近い交差マス」へ更新（両者共通知識）
+      if (cfg.sharedCross && uniqCross.length > 0) {
+        let ft = players[0].focalTarget, fb = board.d(ft, center);
+        for (const x of uniqCross) { const d = board.d(x, center); if (d < fb) { fb = d; ft = x; } }
+        players[0].focalTarget = players[1].focalTarget = ft;
+      }
+
       // 勝利判定（同マス限定）
       if (me.pos === op.pos) {
-        return { met: true, day, crossCellsTotal, anyCross, stuck };
+        return { met: true, day, crossCellsTotal, anyCross, stuck, minReach, firstClose2, firstClose4 };
       }
 
       // ---- belief 更新（交差は「今、相手の直前の道を横切った側」だけが知る） ----
@@ -709,6 +746,14 @@ function playGame(board, cfg, rng) {
         op.belief[op.pos] = 0; // 出会っていない
         normalize(op.belief);
 
+        // 反実仮想: 交差を共有すると、相手(op)も「me が uniqCross を通った＝me の現在地は
+        // そこから roll 以内」を学べる。既定ルール（秘匿）ではこの経路は無い。
+        if (cfg.sharedCross && uniqCross.length > 0) {
+          observeBelief(board, op.belief, uniqCross, [], share ? roll : null, true, null);
+          op.belief[op.pos] = 0;
+          normalize(op.belief);
+        }
+
         // 共有デブリは公開情報：相手はデブリの上には立てない。
         // 秘匿型では相手のデブリを知らないので何も除外できない（それが情報の毒）。
         if (jOn && cfg.jvariant !== 'private') {
@@ -726,7 +771,7 @@ function playGame(board, cfg, rng) {
       placeDebris(1 - pi);
     }
   }
-  return { met: false, day: null, crossCellsTotal, anyCross, stuck };
+  return { met: false, day: null, crossCellsTotal, anyCross, stuck, minReach, firstClose2, firstClose4 };
 }
 
 /* ===================== 実験ランナー ===================== */
@@ -736,12 +781,19 @@ function runCondition(cfg) {
   const board = getBoard(cfg.N, dice);
   const rng = mulberry32(cfg.seed || 12345);
   let met = 0, sumDay = 0, cross = 0, anyCrossGames = 0, stuck = 0;
+  let close2 = 0, metGivenClose2 = 0, sumFirstClose2 = 0, sumLastMile = 0, sumMinDist = 0;
   for (let i = 0; i < cfg.trials; i++) {
     const r = playGame(board, cfg, rng);
     if (r.met) { met++; sumDay += r.day; }
     cross += r.crossCellsTotal;
     if (r.anyCross) anyCrossGames++;
     stuck += r.stuck;
+    sumMinDist += r.minReach;
+    if (r.firstClose2 !== null) {
+      close2++;
+      sumFirstClose2 += r.firstClose2;
+      if (r.met) { metGivenClose2++; sumLastMile += (r.day - r.firstClose2); }
+    }
   }
   return {
     meetRate: (100 * met) / cfg.trials,
@@ -749,6 +801,12 @@ function runCondition(cfg) {
     crossPerGame: cross / cfg.trials,
     crossGameRate: (100 * anyCrossGames) / cfg.trials,
     stuckPerGame: stuck / cfg.trials,
+    // ラストワンマイル分解
+    close2Rate: (100 * close2) / cfg.trials,          // 一度でも距離≤2に接近した割合
+    convRate: close2 ? (100 * metGivenClose2) / close2 : NaN, // 接近を勝ちに変換できた割合
+    firstClose2: close2 ? sumFirstClose2 / close2 : NaN,      // 初めて距離≤2になった日
+    lastMile: metGivenClose2 ? sumLastMile / metGivenClose2 : NaN, // 接近から着地までの日数
+    minDist: sumMinDist / cfg.trials,                 // 到達した最小距離の平均
   };
 }
 
@@ -765,6 +823,15 @@ function printResult(label, r) {
   console.log(
     `${label.padEnd(42)} 出会い ${fmt(r.meetRate).padStart(5)}%  平均決着日 ${fmt(r.avgDay, 2).padStart(5)}  ` +
     `交差/g ${fmt(r.crossPerGame, 2).padStart(6)}  交差有 ${fmt(r.crossGameRate).padStart(5)}%  詰み/g ${fmt(r.stuckPerGame, 2)}`
+  );
+}
+
+// ラストワンマイル分解の表示
+function printDiag(label, r) {
+  console.log(
+    `${label.padEnd(34)} 出会い ${fmt(r.meetRate).padStart(5)}%  ` +
+    `接近≤2 ${fmt(r.close2Rate).padStart(5)}%  変換率 ${fmt(r.convRate).padStart(5)}%  ` +
+    `初接近日 ${fmt(r.firstClose2, 2).padStart(4)}  接近→着地 ${fmt(r.lastMile, 2).padStart(4)}日  最小距離 ${fmt(r.minDist, 2)}`
   );
 }
 
@@ -788,6 +855,7 @@ function main() {
     else if (a === '--jfocus') flags.jfocus = true;
     else if (a.startsWith('--aware=')) flags.aware = a.slice(8);
     else if (a === '--aware') flags.aware = 'dist';
+    else if (a === '--sharedcross') flags.sharedCross = true;
     else pos.push(a);
   }
 
@@ -816,7 +884,7 @@ function main() {
         share: !!flags.share, oppModel: flags.opp || 'random', seed: flags.seed || 12345,
         eps: flags.eps || 0,
         ojama: flags.ojama || 'none', jvariant: flags.jvariant || 'shared', jcap: flags.jcap, jinit: flags.jinit || 0,
-        jfocus: !!flags.jfocus, aware: flags.aware || null,
+        jfocus: !!flags.jfocus, aware: flags.aware || null, sharedCross: !!flags.sharedCross,
       };
       const jl = cfg.ojama !== 'none' ? ` 邪魔${cfg.ojama}-${cfg.jvariant}${cfg.jfocus ? '(集中)' : ''}${cfg.jcap != null ? `(上限${cfg.jcap})` : ''}${cfg.jinit ? `(布石${cfg.jinit})` : ''}` : '';
       const label = `${N}x${N} ${dice.label} ${maxDay}日 減衰${decay} ${policy}${cfg.aware ? `(認識${cfg.aware})` : ''}${cfg.eps ? `(ε=${cfg.eps})` : ''}${cfg.share ? '+出目' : ''}${cfg.oppModel === 'greedy' ? ' oppV2' : ''}${jl}`;
@@ -918,6 +986,18 @@ function runMatrix(trials, seed) {
       );
     }
   }
+
+  console.log(`\n=== 実験9: なぜ推理は約束事(focal)に勝てないのか — ラストワンマイル分解 (7x7, 2d6, 7日) ===`);
+  console.log(`    接近≤2=一度でも距離2以内に寄った割合 / 変換率=その接近を同マス着地に変えられた割合`);
+  printDiag('focal（約束事）', runCondition({ ...base, policy: 'focal' }));
+  printDiag('greedy+出目（推理）', runCondition({ ...base, policy: 'greedy', share: true }));
+  printDiag('greedy（出目なし）', runCondition({ ...base, policy: 'greedy' }));
+  console.log(`    --- focalを情報で強化できるか（focalx=中心アンカー＋交差で相手を掴む） ---`);
+  printDiag('focalx +出目', runCondition({ ...base, policy: 'focalx', share: true }));
+  console.log(`    --- 情報構造の天井: 動的な共有集合点は交差の共有を要する ---`);
+  printDiag('xfocal 交差=秘匿(既定ルール)', runCondition({ ...base, policy: 'xfocal', share: true }));
+  printDiag('xfocal 交差=共有(反実仮想)', runCondition({ ...base, policy: 'xfocal', share: true, sharedCross: true }));
+  printDiag('greedy 交差=共有(反実仮想)', runCondition({ ...base, policy: 'greedy', share: true, sharedCross: true }));
 }
 
 main();
