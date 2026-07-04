@@ -21,6 +21,9 @@
  *   --share  : 出目の相互開示 on
  *   --opp    : belief 更新に使う相手移動モデル random(v1) | greedy(v2)（省略時 random）
  *   --eps    : 確率εで無情報（ランダム）に動く。人間の不完全さのモデル（省略時 0）
+ *   --aware=dist|role : デブリ認識AIの実験機構（実験8。両案とも素朴greedyに負け不採用）。
+ *              dist=期待距離を自陣BFS距離で測る＋共有型は交差尤度も壁で締める
+ *              role=秘匿型でデブリ比率から集中攻撃を検知し、標的側が「錨」になる
  *   --ojama  : おじゃま係 none | random | choke | cage（省略時 none）。
  *              片方が移動するたびに全知のおじゃまがデブリ（通行・停止不可マス）を1個置く。
  *              choke=二人の最短経路DAGの最細断面を優先封鎖（壁を育てる）
@@ -372,8 +375,10 @@ function range(a, b) { const r = []; for (let i = a; i <= b; i++) r.push(i); ret
  * crossCells:  開示された交差マス（対象の直近経路に含まれることが確定）。
  * clearCells:  対象の直近経路に含まれないことが確定したマス（負の情報）。
  * subjectMoved: 対象がまだ一度も動いていない場合 false（→交差マス＝現在地）。
+ * subjectBlocked: 対象の盤のデブリ（既知＝共有型かつ認識AIのとき）。尤度の距離を
+ *                 「壁を通れない」BFS距離に置き換えて絞りを鋭くする。null なら開盤。
  */
-function observeBelief(board, belief, crossCells, clearCells, subjectRoll, subjectMoved) {
+function observeBelief(board, belief, crossCells, clearCells, subjectRoll, subjectMoved, subjectBlocked) {
   const size = board.size;
   if (crossCells.length > 0) {
     if (!subjectMoved) {
@@ -383,11 +388,13 @@ function observeBelief(board, belief, crossCells, clearCells, subjectRoll, subje
       for (let i = 0; i < size; i++) belief[i] = nb[i] * (belief[i] > 0 ? 1 : 0.001);
     } else {
       // 経路がcを通った → 現在地は c から残り歩数以内。距離減衰の尤度を掛ける
+      const dFields = subjectBlocked ? crossCells.map(c => bfsDist(board, c, subjectBlocked)) : null;
       for (let q = 0; q < size; q++) {
         if (belief[q] < 1e-15) continue;
         let like = 0;
-        for (const c of crossCells) {
-          const d = board.d(c, q);
+        for (let ci = 0; ci < crossCells.length; ci++) {
+          const c = crossCells[ci];
+          const d = dFields ? (dFields[ci][q] >= 0 ? dFields[ci][q] : 1e9) : board.d(c, q);
           if (subjectRoll != null) {
             if (d <= subjectRoll) like += subjectRoll + 1 - d;
           } else {
@@ -431,6 +438,18 @@ function expectedDist(board, belief, L) {
   return e;
 }
 
+// デブリ認識版: 自分の盤の実距離（壁の迂回コスト込み）で期待距離を測る。
+// 自陣で到達不能なマスは「相手に来てもらうしかない」ので盤一辺ぶんのペナルティ付き。
+function expectedDistBlocked(board, belief, L, blocked) {
+  const df = bfsDist(board, L, blocked);
+  let e = 0;
+  for (let q = 0; q < board.size; q++) {
+    const w = belief[q];
+    if (w > 1e-15) e += w * (df[q] >= 0 ? df[q] : board.d(L, q) + board.N);
+  }
+  return e;
+}
+
 // belief を半径2でならした「交差期待フィールド」
 function smoothField(board, belief) {
   const sm = new Float64Array(board.size);
@@ -451,9 +470,11 @@ function smoothField(board, belief) {
  * reach: 今回の出目で着地可能なマス（デブリ考慮済み）
  * sampler(landing): 経路を1本サンプリング（デブリ考慮済み）
  * myBlocks: 自分の盤のデブリ（null=なし）。focal の目標マス補正に使う
+ * awareInfo: デブリ認識AI用 { mine, total }（自分の盤のデブリ数／総配置数）。
+ *            秘匿型では「1移動=1デブリ」が公知ルールなので総数は手番から推論できる。
  * 戻り値 { landing, path }
  */
-function chooseMove(board, me, roll, day, maxDay, mode, rng, eps, reach, sampler, myBlocks) {
+function chooseMove(board, me, roll, day, maxDay, mode, rng, eps, reach, sampler, myBlocks, awareInfo) {
   // ε-ランダム：人間の不完全さのモデル。確率 eps で無情報に動く
   if (eps > 0 && mode !== 'random' && rng() < eps) mode = 'random';
 
@@ -495,6 +516,31 @@ function chooseMove(board, me, roll, day, maxDay, mode, rng, eps, reach, sampler
   let best = null, bestScore = -Infinity;
 
   if (mode === 'greedy') {
+    // ---- デブリ認識AIの実験機構（両案とも素朴greedyに勝てず不採用。記録用に残す） ----
+    // 'role'（錨プロトコル・秘匿型）: 「1移動=1デブリ」は公知なので、自分の盤の
+    //   デブリ比率から集中攻撃を無通信で検知できる。標的側はほぼ動かない「錨」になり
+    //   相方に見つけさせる…つもりだったが大幅悪化。減衰1では移動そのものが信号
+    //   （動けば毎手番、長い新鮮な軌跡＝交差の断面を撒ける）で、錨は足跡が小さすぎて
+    //   相方から手がかりを奪う自滅だった。
+    if (awareInfo && awareInfo.mode === 'role'
+        && awareInfo.total >= 4 && awareInfo.mine / awareInfo.total >= 0.7) {
+      for (const L of reach) {
+        const score = WIN_WEIGHT * belief[L] - board.d(L, me.pos) + rng() * 1e-6;
+        if (score > bestScore) { bestScore = score; best = L; }
+      }
+      return { landing: best, path: sampler(best) };
+    }
+    // 'dist'（自陣BFS距離計画）: 期待距離を壁の迂回コスト込みで測る…つもりだったが
+    //   全条件で悪化。出会いは相互的（自分が行けなくても相手が来れば会える）なので、
+    //   自陣の壁を「避ける」計画は壁の向こうの相方から遠ざかる誤最適化になる。
+    if (awareInfo && awareInfo.mode === 'dist') {
+      for (const L of reach) {
+        const score = WIN_WEIGHT * belief[L] - expectedDistBlocked(board, belief, L, awareInfo.blocks) + rng() * 1e-6;
+        if (score > bestScore) { bestScore = score; best = L; }
+      }
+      return { landing: best, path: sampler(best) };
+    }
+    // 採用構成: 素朴greedy（到達集合だけデブリを尊重し、狙いはマンハッタン距離）
     for (const L of reach) {
       const score = WIN_WEIGHT * belief[L] - expectedDist(board, belief, L) + rng() * 1e-6;
       if (score > bestScore) { bestScore = score; best = L; }
@@ -553,10 +599,11 @@ function playGame(board, cfg, rng) {
   }
   const jcap = cfg.jcap != null ? cfg.jcap : 999;
   let debrisCount = 0;
+  const debrisPer = [0, 0]; // 各プレイヤーの盤に置かれた数（秘匿型の役割推論用）
   const placeDebris = (nextMover) => {
     if (!jOn || debrisCount >= jcap) return;
     const { cell, target } = ojamaPlace(board, cfg, blocks, players[0].pos, players[1].pos, nextMover, rng);
-    if (cell >= 0) { blocks[target][cell] = 1; debrisCount++; }
+    if (cell >= 0) { blocks[target][cell] = 1; debrisCount++; debrisPer[target]++; }
   };
   // 事前配置: 全知おじゃまは開始位置を見てから、1日目の前にデブリを布石できる
   if (jOn && cfg.jinit) {
@@ -604,8 +651,14 @@ function playGame(board, cfg, rng) {
         continue;
       }
 
-      // 着地選択
-      const mv = chooseMove(board, me, roll, day, maxDay, policy, rng, cfg.eps || 0, reach, sampler, myBlocks);
+      // 着地選択（デブリ認識AIの実験機構: 'dist'=自陣BFS距離計画 / 'role'=錨プロトコル）
+      let awareInfo = null;
+      if (cfg.aware === 'dist' && jOn && debrisCount > 0) {
+        awareInfo = { mode: 'dist', blocks: myBlocks };
+      } else if (cfg.aware === 'role' && jOn && cfg.jvariant === 'private') {
+        awareInfo = { mode: 'role', mine: debrisPer[pi], total: debrisCount };
+      }
+      const mv = chooseMove(board, me, roll, day, maxDay, policy, rng, cfg.eps || 0, reach, sampler, myBlocks, awareInfo);
       const landing = mv.landing, path = mv.path;
 
       // 交差判定（相手の減衰内スタンプとの重なり）。segment=移動で踏んだマス（出発マスは除く）
@@ -640,9 +693,12 @@ function playGame(board, cfg, rng) {
         //     交差なし → 自分が踏んだマスは相手の直近経路に含まれない（負の情報）。
         //     着地マスに相手はいない（勝利していないので）。
         const myClear = [...new Set(segment)]; // 交差マス以外の踏破マスは相手経路に含まれない
+        // 認識AI('dist')＋共有型: 相手も同じ壁を通れないので、交差からの尤度をBFS距離で締める
+        const opBlocksKnown = (cfg.aware === 'dist' && jOn && cfg.jvariant !== 'private' && debrisCount > 0)
+          ? blocks[1 - pi] : null;
         observeBelief(
           board, me.belief, uniqCross, myClear,
-          share ? op.lastRoll : null, op.moved
+          share ? op.lastRoll : null, op.moved, opBlocksKnown
         );
         me.belief[me.pos] = 0;
         normalize(me.belief);
@@ -730,6 +786,8 @@ function main() {
     else if (a.startsWith('--jcap=')) flags.jcap = +a.slice(7);
     else if (a.startsWith('--jinit=')) flags.jinit = +a.slice(8);
     else if (a === '--jfocus') flags.jfocus = true;
+    else if (a.startsWith('--aware=')) flags.aware = a.slice(8);
+    else if (a === '--aware') flags.aware = 'dist';
     else pos.push(a);
   }
 
@@ -758,10 +816,10 @@ function main() {
         share: !!flags.share, oppModel: flags.opp || 'random', seed: flags.seed || 12345,
         eps: flags.eps || 0,
         ojama: flags.ojama || 'none', jvariant: flags.jvariant || 'shared', jcap: flags.jcap, jinit: flags.jinit || 0,
-        jfocus: !!flags.jfocus,
+        jfocus: !!flags.jfocus, aware: flags.aware || null,
       };
       const jl = cfg.ojama !== 'none' ? ` 邪魔${cfg.ojama}-${cfg.jvariant}${cfg.jfocus ? '(集中)' : ''}${cfg.jcap != null ? `(上限${cfg.jcap})` : ''}${cfg.jinit ? `(布石${cfg.jinit})` : ''}` : '';
-      const label = `${N}x${N} ${dice.label} ${maxDay}日 減衰${decay} ${policy}${cfg.eps ? `(ε=${cfg.eps})` : ''}${cfg.share ? '+出目' : ''}${cfg.oppModel === 'greedy' ? ' oppV2' : ''}${jl}`;
+      const label = `${N}x${N} ${dice.label} ${maxDay}日 減衰${decay} ${policy}${cfg.aware ? `(認識${cfg.aware})` : ''}${cfg.eps ? `(ε=${cfg.eps})` : ''}${cfg.share ? '+出目' : ''}${cfg.oppModel === 'greedy' ? ' oppV2' : ''}${jl}`;
       printResult(label, runCondition(cfg));
     }
   }
@@ -842,6 +900,24 @@ function runMatrix(trials, seed) {
     printResult(`ε=0.4 choke-${jv}`, runCondition({ ...base, policy: 'greedy', share: true, eps: 0.4, ojama: 'choke', jvariant: jv }));
   }
   printResult(`ε=0.4 cage-private(集中)`, runCondition({ ...base, policy: 'greedy', share: true, eps: 0.4, ojama: 'cage', jvariant: 'private', jfocus: true }));
+
+  console.log(`\n=== 実験8: デブリを認識する協力AI（greedy+出目、両案とも不採用の記録） ===`);
+  console.log(`    dist=自陣BFS距離で計画 / role=デブリ比率で集中攻撃を検知し標的が錨になる`);
+  const jconfigs = [
+    ['choke-shared', { ojama: 'choke', jvariant: 'shared' }],
+    ['choke-private', { ojama: 'choke', jvariant: 'private' }],
+    ['choke-private(集中)', { ojama: 'choke', jvariant: 'private', jfocus: true }],
+    ['cage-private(集中)', { ojama: 'cage', jvariant: 'private', jfocus: true }],
+  ];
+  for (const [jname, jcfg] of jconfigs) {
+    for (const aware of [null, 'dist', 'role']) {
+      if (aware === 'role' && jcfg.jvariant !== 'private') continue; // roleは秘匿型専用
+      printResult(
+        `${jname} ${aware ? `認識${aware}` : '素朴greedy'}`,
+        runCondition({ ...base, policy: 'greedy', share: true, ...jcfg, aware })
+      );
+    }
+  }
 }
 
 main();
