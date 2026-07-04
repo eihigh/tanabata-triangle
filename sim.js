@@ -30,10 +30,14 @@
  *              role =秘匿型でデブリ比率から集中攻撃を検知し、標的側が「錨」になる
  *              block=公知の「1移動=1デブリ」＋おじゃま方策から相手のデブリ位置を推定し
  *                    「相手はそこに立てない」を belief に反映（被おじゃまの theory-of-mind）
- *   --ojama  : おじゃま係 none | random | choke | cage（省略時 none）。
+ *   --ojama  : おじゃま係 none | random | choke | cage | cagecenter | predict | spread（省略時 none）。
  *              片方が移動するたびに全知のおじゃまがデブリ（通行・停止不可マス）を1個置く。
  *              choke=二人の最短経路DAGの最細断面を優先封鎖（壁を育てる）
- *              cage =予測出会い地点（二人の中間・盤中央寄り）そのものと周囲を毒殺
+ *              cage =予測出会い地点（二人の中間・盤中央寄り）そのものと周囲を毒殺（反応型）
+ *              以下は実験11の読み合い用: cagecenter=常に中心を毒す / predict=プレイヤーの
+ *              集合戦略 pfocal を読んで先回り / spread=メニューを日ごとに巡回してヘッジ
+ *   --pfocal : プレイヤーの集合戦略 center | rotate | wander（省略時 center。実験11）。
+ *              center=中心固定 / rotate=日ごとにメニュー巡回 / wander=日から決まる公開擬似乱数
  *   --jvariant : デブリの効き方 shared | private（省略時 shared）
  *              shared=両者共通の盤・両者に公開 / private=次に動く側だけに効き、相手には見えない
  *   --jfocus : private時、標的を交互でなく常に同じ片方に集中（見えない壁での隔離）
@@ -293,8 +297,44 @@ function cageCell(board, blocked, posA, posB, rng) {
   return best;
 }
 
+// 集合点メニュー: 二人が約束できる複数の候補（中心＋4象限のランドマーク）。
+// すべて盤の共通知識から決まるので、二人は通信なしで同じ点を選べる。
+function landmarkMenu(board) {
+  if (board._menu) return board._menu;
+  const N = board.N, c = (N - 1) >> 1, r = Math.max(1, Math.round(N / 4));
+  const clamp = (v) => Math.max(0, Math.min(N - 1, v));
+  const cell = (rr, cc) => clamp(rr) * N + clamp(cc);
+  board._menu = [cell(c - r, c - r), cell(c - r, c + r), cell(c + r, c - r), cell(c + r, c + r)];
+  return board._menu;
+}
+
+// プレイヤーの集合戦略 pfocal から「その日の集合点」を返す（両者が同じ値を得る）。
+//   center=常に中心 / rotate=日ごとにメニューを巡回 / wander=日から決まる公開擬似乱数で選ぶ
+function focalGoal(board, cfg, day) {
+  const c = (board.N - 1) >> 1, center = c * board.N + c;
+  const pf = cfg.pfocal || 'center';
+  if (pf === 'center') return center;
+  const menu = landmarkMenu(board);
+  if (pf === 'rotate') return menu[(day - 1) % menu.length];
+  if (pf === 'wander') return menu[(Math.imul(day, 2654435761) >>> 0) % menu.length];
+  return center;
+}
+
+// 指定マス M（とその周囲）を毒す。M が空けば M、埋まっていれば半径3内の最寄り空きマス。
+function cageAround(board, blocked, M, posA, posB, rng) {
+  if (M < 0) return -1;
+  if (!blocked[M] && M !== posA && M !== posB) return M;
+  let best = -1, bd = Infinity;
+  for (let q = 0; q < board.size; q++) {
+    if (blocked[q] || q === posA || q === posB) continue;
+    const d = board.d(q, M) + rng() * 1e-3;
+    if (d < bd && d < 3) { bd = d; best = q; }
+  }
+  return best;
+}
+
 // デブリ1個の配置先を決める。戻り値 { cell, target }（cell<0なら配置不能）
-function ojamaPlace(board, cfg, blocks, posA, posB, nextMover, rng) {
+function ojamaPlace(board, cfg, blocks, posA, posB, nextMover, rng, day) {
   const priv = cfg.jvariant === 'private';
   // 秘匿型の標的: 通常は「次に動く側」に交互。--jfocus なら常に同じ片方へ集中し、
   // 片方だけを見えない壁で隔離する（もう片方の盤は綺麗なまま）
@@ -302,13 +342,25 @@ function ojamaPlace(board, cfg, blocks, posA, posB, nextMover, rng) {
   const blockedArr = blocks[target];
   const from = priv ? (target === 0 ? posA : posB) : posA;
   const to = priv ? (target === 0 ? posB : posA) : posB;
+  const c = (board.N - 1) >> 1, center = c * board.N + c;
   let cell = -1;
   if (cfg.ojama === 'cage') cell = cageCell(board, blockedArr, posA, posB, rng);
-  if (cfg.ojama === 'choke' || (cfg.ojama === 'cage' && cell < 0)) {
+  // 読み合い用のおじゃま:
+  //   cagecenter=中心だけを毒す素朴読み（プレイヤーが中心に来ると決めつける）
+  //   predict   =プレイヤーの集合戦略 pfocal を読み、その日の集合点を先回りで毒す（強い読み）
+  //   spread    =メニュー全ランドマークに分散して毒す（ヘッジ。どこに来ても薄く効く）
+  else if (cfg.ojama === 'cagecenter') cell = cageAround(board, blockedArr, center, posA, posB, rng);
+  else if (cfg.ojama === 'predict') cell = cageAround(board, blockedArr, focalGoal(board, cfg, day || 1), posA, posB, rng);
+  else if (cfg.ojama === 'spread') {
+    const menu = landmarkMenu(board);
+    cell = cageAround(board, blockedArr, menu[(day || 1) % menu.length], posA, posB, rng);
+  }
+  if (cfg.ojama === 'choke' || ((cfg.ojama === 'cage' || cfg.ojama === 'predict' ||
+      cfg.ojama === 'cagecenter' || cfg.ojama === 'spread') && cell < 0)) {
     cell = chokeCell(board, blockedArr, from, to, rng);
   }
   if (cell < 0) {
-    // random ポリシー / choke・cage のフォールバック
+    // random ポリシー / 各cageのフォールバック
     const legal = [];
     for (let q = 0; q < board.size; q++) {
       if (!blockedArr[q] && q !== posA && q !== posB) legal.push(q);
@@ -496,7 +548,7 @@ function smoothField(board, belief) {
  *            秘匿型では「1移動=1デブリ」が公知ルールなので総数は手番から推論できる。
  * 戻り値 { landing, path }
  */
-function chooseMove(board, me, roll, day, maxDay, mode, rng, eps, reach, sampler, myBlocks, awareInfo) {
+function chooseMove(board, me, roll, day, maxDay, mode, rng, eps, reach, sampler, myBlocks, awareInfo, cfg) {
   // ε-ランダム：人間の不完全さのモデル。確率 eps で無情報に動く
   if (eps > 0 && mode !== 'random' && rng() < eps) mode = 'random';
 
@@ -517,8 +569,7 @@ function chooseMove(board, me, roll, day, maxDay, mode, rng, eps, reach, sampler
   // nfocal: 素朴な約束事。常に「厳密な中心」を狙うだけ（自分の盤で塞がれていても
   // 再設定しない）。focalの再設定が秘匿おじゃま下で不当に有利になっていないかの対照。
   if (mode === 'focal' || mode === 'nfocal') {
-    const c = (board.N - 1) >> 1;
-    let goal = c * board.N + c;
+    let goal = focalGoal(board, cfg || {}, day); // pfocal に応じて中心 or メニューの集合点
     if (mode === 'focal' && myBlocks && myBlocks[goal]) {
       let bg = goal, bd = Infinity;
       for (let q = 0; q < board.size; q++) {
@@ -645,14 +696,14 @@ function playGame(board, cfg, rng) {
   const jcap = cfg.jcap != null ? cfg.jcap : 999;
   let debrisCount = 0;
   const debrisPer = [0, 0]; // 各プレイヤーの盤に置かれた数（秘匿型の役割推論用）
-  const placeDebris = (nextMover) => {
+  const placeDebris = (nextMover, curDay) => {
     if (!jOn || debrisCount >= jcap) return;
-    const { cell, target } = ojamaPlace(board, cfg, blocks, players[0].pos, players[1].pos, nextMover, rng);
+    const { cell, target } = ojamaPlace(board, cfg, blocks, players[0].pos, players[1].pos, nextMover, rng, curDay);
     if (cell >= 0) { blocks[target][cell] = 1; debrisCount++; debrisPer[target]++; }
   };
   // 事前配置: 全知おじゃまは開始位置を見てから、1日目の前にデブリを布石できる
   if (jOn && cfg.jinit) {
-    for (let i = 0; i < cfg.jinit; i++) placeDebris(i & 1);
+    for (let i = 0; i < cfg.jinit; i++) placeDebris(i & 1, 1);
   }
 
   let turn = 0, crossCellsTotal = 0, anyCross = false, stuck = 0;
@@ -692,7 +743,7 @@ function playGame(board, cfg, rng) {
         me.lastRoll = roll;
         me.moved = true;
         // belief 更新は簡略化のため省略（詰みは稀なイベント）
-        placeDebris(1 - pi);
+        placeDebris(1 - pi, day);
         continue;
       }
 
@@ -703,7 +754,7 @@ function playGame(board, cfg, rng) {
       } else if (cfg.aware === 'role' && jOn && cfg.jvariant === 'private') {
         awareInfo = { mode: 'role', mine: debrisPer[pi], total: debrisCount };
       }
-      const mv = chooseMove(board, me, roll, day, maxDay, policy, rng, cfg.eps || 0, reach, sampler, myBlocks, awareInfo);
+      const mv = chooseMove(board, me, roll, day, maxDay, policy, rng, cfg.eps || 0, reach, sampler, myBlocks, awareInfo, cfg);
       const landing = mv.landing, path = mv.path;
 
       // 交差判定（相手の減衰内スタンプとの重なり）。segment=移動で踏んだマス（出発マスは除く）
@@ -804,7 +855,7 @@ function playGame(board, cfg, rng) {
       void prevLastPath;
 
       // おじゃま係: 移動が終わるたびにデブリを1個置く
-      placeDebris(1 - pi);
+      placeDebris(1 - pi, day);
     }
   }
   return { met: false, day: null, crossCellsTotal, anyCross, stuck, minReach, firstClose2, firstClose4 };
@@ -892,6 +943,7 @@ function main() {
     else if (a.startsWith('--aware=')) flags.aware = a.slice(8);
     else if (a === '--aware') flags.aware = 'dist';
     else if (a === '--sharedcross') flags.sharedCross = true;
+    else if (a.startsWith('--pfocal=')) flags.pfocal = a.slice(9);
     else pos.push(a);
   }
 
@@ -921,9 +973,11 @@ function main() {
         eps: flags.eps || 0,
         ojama: flags.ojama || 'none', jvariant: flags.jvariant || 'shared', jcap: flags.jcap, jinit: flags.jinit || 0,
         jfocus: !!flags.jfocus, aware: flags.aware || null, sharedCross: !!flags.sharedCross,
+        pfocal: flags.pfocal || 'center',
       };
       const jl = cfg.ojama !== 'none' ? ` 邪魔${cfg.ojama}-${cfg.jvariant}${cfg.jfocus ? '(集中)' : ''}${cfg.jcap != null ? `(上限${cfg.jcap})` : ''}${cfg.jinit ? `(布石${cfg.jinit})` : ''}` : '';
-      const label = `${N}x${N} ${dice.label} ${maxDay}日 減衰${decay} ${policy}${cfg.aware ? `(認識${cfg.aware})` : ''}${cfg.eps ? `(ε=${cfg.eps})` : ''}${cfg.share ? '+出目' : ''}${cfg.oppModel === 'greedy' ? ' oppV2' : ''}${jl}`;
+      const pl = cfg.pfocal && cfg.pfocal !== 'center' ? `[${cfg.pfocal}]` : '';
+      const label = `${N}x${N} ${dice.label} ${maxDay}日 減衰${decay} ${policy}${pl}${cfg.aware ? `(認識${cfg.aware})` : ''}${cfg.eps ? `(ε=${cfg.eps})` : ''}${cfg.share ? '+出目' : ''}${cfg.oppModel === 'greedy' ? ' oppV2' : ''}${jl}`;
       printResult(label, runCondition(cfg));
     }
   }
@@ -1055,6 +1109,48 @@ function runMatrix(trials, seed) {
   printDiag('focal', runCondition({ ...base, policy: 'focal', ...jf }));
   printDiag('greedy+出目', runCondition({ ...base, policy: 'greedy', share: true, ...jf }));
   printDiag('greedy+出目 認識block', runCondition({ ...base, policy: 'greedy', share: true, aware: 'block', ...jf }));
+
+  console.log(`\n=== 実験11: focalを前提とした読み合い — 集合戦略 × おじゃま配置の利得マトリクス ===`);
+  console.log(`    focalは悪でなく大前提。二人が"どこに集まるか"を巡る全知おじゃまとの読み合いを測る。`);
+  console.log(`    数字=出会い率%（プレイヤー視点の得点）。秘匿・集中(private/jfocus)、7x7・2d6・7日・1万試行`);
+  const jbase = { ...base, jvariant: 'private', jfocus: true };
+  // プレイヤーの集合戦略（行）
+  const prows = [
+    ['center 中心固定', { policy: 'focal', pfocal: 'center' }],
+    ['rotate 日巡回  ', { policy: 'focal', pfocal: 'rotate' }],
+    ['wander 公開乱数', { policy: 'focal', pfocal: 'wander' }],
+    ['greedy 推理    ', { policy: 'greedy', share: true }],
+  ];
+  // おじゃまの配置戦略（列）
+  const ocols = [
+    ['なし', { ojama: 'none' }],
+    ['中心固定', { ojama: 'cagecenter' }],
+    ['予測追尾', { ojama: 'predict' }],
+    ['分散', { ojama: 'spread' }],
+    ['反応', { ojama: 'cage' }],
+  ];
+  const grid = [];
+  console.log(`\n  ${'プレイヤー＼おじゃま'.padEnd(16)}` + ocols.map(([n]) => n.padStart(8)).join(''));
+  for (const [rname, rcfg] of prows) {
+    const row = [];
+    for (const [, ocfg] of ocols) {
+      const r = runCondition({ ...jbase, ...rcfg, ...ocfg });
+      row.push(r.meetRate);
+    }
+    grid.push(row);
+    console.log(`  ${rname.padEnd(16)}` + row.map((v) => `${v.toFixed(1)}`.padStart(8)).join(''));
+  }
+  // 読み合いの要約: 各プレイヤー戦略に対するおじゃまの最善（列内最小＝おじゃまが選ぶ）、
+  // その中でプレイヤーが選ぶ最善（maximin）
+  console.log(`\n  読み: 各行の「おじゃま最善（＝その行の最小値、なし列は除く）」`);
+  let bestRow = -1, bestVal = -1;
+  for (let i = 0; i < prows.length; i++) {
+    let worst = Infinity, wj = -1;
+    for (let j = 1; j < ocols.length; j++) if (grid[i][j] < worst) { worst = grid[i][j]; wj = j; }
+    console.log(`    ${prows[i][0]}: 最悪 ${worst.toFixed(1)}% (おじゃま=${ocols[wj][0]})`);
+    if (worst > bestVal) { bestVal = worst; bestRow = i; }
+  }
+  console.log(`  → プレイヤーの maximin 戦略: ${prows[bestRow][0].trim()}（保証 ${bestVal.toFixed(1)}%）`);
 }
 
 main();
