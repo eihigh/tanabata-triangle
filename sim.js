@@ -16,17 +16,20 @@
  *   ダイス   : NdF 記法（例 2d6, 1d3）。カンマ区切りで複数可。数字のみなら 1dF。
  *   盤       : カンマ区切り（例 7 / 5,7,9）
  *   減衰     : 0=全軌跡, 1=直近1手番, ...
- *   --policy : random | greedy | infogain | hybrid | focal | focalx | xfocal（省略時 random）
+ *   --policy : random | greedy | infogain | hybrid | focal | nfocal | focalx | xfocal（省略時 random）
  *              focal =事前に示し合わせた収束点（盤の中心）へ向かうだけの「約束事」戦略
+ *              nfocal=focalの素朴版。中心が塞がれても再設定しない（実験10の下限対照）
  *              focalx=focalに「交差で相手を掴む」を足した強化案（実験9。私的情報で逆に悪化）
  *              xfocal=集合点を共有交差マスへ動かす（--sharedcross のときだけ機能。実験9）
  *   --sharedcross : 反実仮想。交差を両者に開示する（既定は横切った側だけ）。実験9の天井測定用
  *   --share  : 出目の相互開示 on
  *   --opp    : belief 更新に使う相手移動モデル random(v1) | greedy(v2)（省略時 random）
  *   --eps    : 確率εで無情報（ランダム）に動く。人間の不完全さのモデル（省略時 0）
- *   --aware=dist|role : デブリ認識AIの実験機構（実験8。両案とも素朴greedyに負け不採用）。
- *              dist=期待距離を自陣BFS距離で測る＋共有型は交差尤度も壁で締める
- *              role=秘匿型でデブリ比率から集中攻撃を検知し、標的側が「錨」になる
+ *   --aware=dist|role|block : デブリ認識AIの実験機構（実験8・10。いずれも素朴greedyに勝てず不採用）。
+ *              dist =期待距離を自陣BFS距離で測る＋共有型は交差尤度も壁で締める
+ *              role =秘匿型でデブリ比率から集中攻撃を検知し、標的側が「錨」になる
+ *              block=公知の「1移動=1デブリ」＋おじゃま方策から相手のデブリ位置を推定し
+ *                    「相手はそこに立てない」を belief に反映（被おじゃまの theory-of-mind）
  *   --ojama  : おじゃま係 none | random | choke | cage（省略時 none）。
  *              片方が移動するたびに全知のおじゃまがデブリ（通行・停止不可マス）を1個置く。
  *              choke=二人の最短経路DAGの最細断面を優先封鎖（壁を育てる）
@@ -315,6 +318,22 @@ function ojamaPlace(board, cfg, blocks, posA, posB, nextMover, rng) {
   return { cell, target };
 }
 
+// 相手の盤に置かれたであろう k 個のデブリを、おじゃまの方策から静的に推定する
+// （デブリ認識AI 'block' 用。honest: 使うのは公知の方策・自分の位置・自分のbeliefのみ）。
+function estimatePartnerBlocked(board, cfg, myPos, partnerEst, k, rng) {
+  const est = new Uint8Array(board.size);
+  for (let i = 0; i < k; i++) {
+    let cell = -1;
+    if (cfg.ojama === 'cage') cell = cageCell(board, est, myPos, partnerEst, rng);
+    if (cfg.ojama === 'choke' || (cfg.ojama === 'cage' && cell < 0)) {
+      cell = chokeCell(board, est, partnerEst, myPos, rng); // from=相手, to=自分
+    }
+    if (cell >= 0 && cell !== partnerEst && cell !== myPos) est[cell] = 1;
+    else break;
+  }
+  return est;
+}
+
 /* ===================== belief（相手位置の確率分布） ===================== */
 
 function makeBelief(board, myStart, minDist) {
@@ -495,10 +514,12 @@ function chooseMove(board, me, roll, day, maxDay, mode, rng, eps, reach, sampler
   // belief も交差も出目も一切使わない「約束事」戦略。必勝法の脅威を測るための対照。
   // 中心が自分の盤で塞がれていたら「中心に最も近い空きマス」に目標を替える
   // （決定的な走査順なので、デブリが共有・公開なら二人は同じ代替目標を選べる）。
-  if (mode === 'focal') {
+  // nfocal: 素朴な約束事。常に「厳密な中心」を狙うだけ（自分の盤で塞がれていても
+  // 再設定しない）。focalの再設定が秘匿おじゃま下で不当に有利になっていないかの対照。
+  if (mode === 'focal' || mode === 'nfocal') {
     const c = (board.N - 1) >> 1;
     let goal = c * board.N + c;
-    if (myBlocks && myBlocks[goal]) {
+    if (mode === 'focal' && myBlocks && myBlocks[goal]) {
       let bg = goal, bd = Infinity;
       for (let q = 0; q < board.size; q++) {
         if (myBlocks[q]) continue;
@@ -764,6 +785,21 @@ function playGame(board, cfg, rng) {
           normalize(me.belief);
           normalize(op.belief);
         }
+
+        // 認識AI 'block'（秘匿型・相手の被おじゃまを推理）:
+        // 公知ルール「1移動=1デブリ」から相手の盤のデブリ総数を知り、おじゃまの方策を
+        // 使って相手のデブリ位置を推定→「相手はそこに立てない」を belief に反映する。
+        // 全知おじゃまへの theory-of-mind。推定は相手位置=自分のbelief最尤という循環近似。
+        if (cfg.aware === 'block' && jOn && cfg.jvariant === 'private' && debrisCount > 0) {
+          const partnerDebris = debrisCount - debrisPer[pi]; // 相手の盤のデブリ数（公知）
+          if (partnerDebris > 0) {
+            let est = 0, bw = -1;
+            for (let q = 0; q < size; q++) if (me.belief[q] > bw) { bw = me.belief[q]; est = q; }
+            const pb = estimatePartnerBlocked(board, cfg, me.pos, est, partnerDebris, rng);
+            for (let q = 0; q < size; q++) if (pb[q]) me.belief[q] *= 0.15; // soft（推定は不確実）
+            normalize(me.belief);
+          }
+        }
       }
       void prevLastPath;
 
@@ -998,6 +1034,27 @@ function runMatrix(trials, seed) {
   printDiag('xfocal 交差=秘匿(既定ルール)', runCondition({ ...base, policy: 'xfocal', share: true }));
   printDiag('xfocal 交差=共有(反実仮想)', runCondition({ ...base, policy: 'xfocal', share: true, sharedCross: true }));
   printDiag('greedy 交差=共有(反実仮想)', runCondition({ ...base, policy: 'greedy', share: true, sharedCross: true }));
+
+  console.log(`\n=== 実験10: 秘匿おじゃま下で focal は成立するか / 被おじゃま推理は効くか (7x7, 2d6, 7日) ===`);
+  console.log(`    Q1: 中心が相手の盤で塞がれても focal は成立するのか（nfocal=再設定しない素朴版で下限を見る）`);
+  console.log(`    Q2: 「相手はおじゃまされていそう」を belief に足す認識block は greedy を押し上げるか`);
+  const jc10 = [
+    ['choke-private', { ojama: 'choke', jvariant: 'private' }],
+    ['choke-private(集中)', { ojama: 'choke', jvariant: 'private', jfocus: true }],
+    ['cage-private(集中)', { ojama: 'cage', jvariant: 'private', jfocus: true }],
+  ];
+  for (const [jname, jcfg] of jc10) {
+    console.log(`  --- ${jname} ---`);
+    printResult('  focal（約束事）', runCondition({ ...base, policy: 'focal', ...jcfg }));
+    printResult('  nfocal（素朴・再設定なし）', runCondition({ ...base, policy: 'nfocal', ...jcfg }));
+    printResult('  greedy+出目（素朴推理）', runCondition({ ...base, policy: 'greedy', share: true, ...jcfg }));
+    printResult('  greedy+出目 認識block', runCondition({ ...base, policy: 'greedy', share: true, aware: 'block', ...jcfg }));
+  }
+  console.log(`    --- ラストワンマイル分解: 認識block は接近を着地に変換できているか (cage集中) ---`);
+  const jf = { ojama: 'cage', jvariant: 'private', jfocus: true };
+  printDiag('focal', runCondition({ ...base, policy: 'focal', ...jf }));
+  printDiag('greedy+出目', runCondition({ ...base, policy: 'greedy', share: true, ...jf }));
+  printDiag('greedy+出目 認識block', runCondition({ ...base, policy: 'greedy', share: true, aware: 'block', ...jf }));
 }
 
 main();
