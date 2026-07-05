@@ -1,0 +1,275 @@
+// フェーズ進行・入力・ハンドオフ・勝敗表示のオーケストレーション
+import {
+  createGame,
+  placeDebris,
+  canPlaceDebris,
+  applyMove,
+  legalStep,
+  hasAnyLegalMove,
+  resolveStuck,
+  activeSeeker,
+  isDebrisPhase,
+  isMovePhase,
+  hints,
+  key,
+  eq,
+  DIRS,
+  PHASE,
+} from './engine.js';
+import { drawBoard, COLORS } from './render.js';
+
+const SEEKER_LABEL = { orihime: '織姫', hikoboshi: '彦星' };
+
+const el = (id) => document.getElementById(id);
+
+const ui = {
+  canvas: el('board'),
+  canvas2: el('board2'), // 王様ビューのもう一枚
+  boards: el('boards'),
+  roleBadge: el('role-badge'),
+  status: el('status'),
+  roundInfo: el('round-info'),
+  dirPad: el('dir-pad'),
+  btnUndo: el('btn-undo'),
+  btnConfirm: el('btn-confirm'),
+  moveControls: el('move-controls'),
+  debrisControls: el('debris-controls'),
+  btnPlaceDebris: el('btn-place-debris'),
+  handoff: el('handoff'),
+  handoffText: el('handoff-text'),
+  handoffBtn: el('handoff-btn'),
+  overlay: el('overlay'),
+  overlayTitle: el('overlay-title'),
+  overlayText: el('overlay-text'),
+  overlayBtn: el('overlay-btn'),
+};
+
+let state;
+let path; // 移動入力中の {x,y} 配列（先頭=現在位置）
+let debrisPick; // 王様が仮選択中のデブリマス {x,y}
+
+function start() {
+  state = createGame();
+  path = null;
+  debrisPick = null;
+  ui.overlay.classList.add('hidden');
+  beginPhase();
+}
+
+// 各フェーズ開始時にハンドオフ画面を挟む
+function beginPhase() {
+  if (state.phase === PHASE.GAME_OVER) return showResult();
+  const who = activeSeeker(state);
+  const king = isDebrisPhase(state);
+  const target = SEEKER_LABEL[who];
+  const passTo = king ? '王様' : target;
+  const detail = king
+    ? `${target}の盤面にデブリを置きます`
+    : `${target}が移動します`;
+  ui.handoffText.innerHTML = `<strong>${passTo}</strong> に渡してください<br><span class="handoff-detail">${detail}</span>`;
+  ui.handoff.classList.remove('hidden');
+  ui.handoffBtn.onclick = () => {
+    ui.handoff.classList.add('hidden');
+    enterPhase();
+  };
+}
+
+function enterPhase() {
+  const who = activeSeeker(state);
+  updateHeader();
+
+  if (isDebrisPhase(state)) {
+    // 王様ビュー：両盤面を表示
+    setupKingView(who);
+  } else {
+    // シーカービュー：自分の盤面のみ
+    setupSeekerView(who);
+  }
+}
+
+function updateHeader() {
+  const who = activeSeeker(state);
+  const king = isDebrisPhase(state);
+  ui.roundInfo.textContent = `ラウンド ${state.round} / ${state.maxRounds}`;
+  if (king) {
+    ui.roleBadge.textContent = '王様';
+    ui.roleBadge.style.background = '#7a5cff';
+    ui.status.textContent = `${SEEKER_LABEL[who]}の盤面にデブリを1個置いて邪魔しよう（軌跡の無いマス）`;
+  } else {
+    ui.roleBadge.textContent = SEEKER_LABEL[who];
+    ui.roleBadge.style.background = COLORS[who].piece;
+    ui.status.textContent = '相手と同じマスにピッタリ止まれば勝ち。★は軌跡の交差ヒント';
+  }
+}
+
+// ---- 王様（デブリ設置）-----------------------------------------------------
+function setupKingView(who) {
+  ui.moveControls.classList.add('hidden');
+  ui.debrisControls.classList.remove('hidden');
+  ui.dirPad.classList.add('hidden');
+  ui.boards.classList.add('king'); // 2枚並べる
+  debrisPick = null;
+  ui.btnPlaceDebris.disabled = true;
+
+  const render = () => {
+    // 左：織姫盤、右：彦星盤（両方フル表示）
+    drawBoard(ui.canvas, state, { who: 'orihime', reveal: true });
+    drawBoard(ui.canvas2, state, { who: 'hikoboshi', reveal: true });
+    // 選択中デブリのハイライトは対象盤に丸を描く（簡易）
+  };
+  render();
+  labelKingBoards(who);
+
+  const targetCanvas = who === 'orihime' ? ui.canvas : ui.canvas2;
+  const onClick = ( evt) => {
+    const cell = cellFromEvent(targetCanvas, evt);
+    if (!cell) return;
+    if (!canPlaceDebris(state, who, cell)) {
+      flashStatus('そのマスには置けません（軌跡上／盤外）');
+      return;
+    }
+    debrisPick = cell;
+    ui.btnPlaceDebris.disabled = false;
+    render();
+    // 仮選択マーカー
+    markPick(targetCanvas, cell);
+  };
+  // 両キャンバスにクリックを付けるが、対象盤以外は無視
+  ui.canvas.onclick = who === 'orihime' ? onClick : null;
+  ui.canvas2.onclick = who === 'hikoboshi' ? onClick : null;
+
+  ui.btnPlaceDebris.onclick = () => {
+    if (!debrisPick) return;
+    placeDebris(state, who, debrisPick);
+    debrisPick = null;
+    beginPhase();
+  };
+}
+
+function labelKingBoards(activeWho) {
+  el('board-label').textContent =
+    '織姫の盤面' + (activeWho === 'orihime' ? '（設置対象）' : '');
+  el('board2-label').textContent =
+    '彦星の盤面' + (activeWho === 'hikoboshi' ? '（設置対象）' : '');
+}
+
+function markPick(canvas, cell) {
+  const ctx = canvas.getContext('2d');
+  const s = canvas.width / state.size;
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 3;
+  ctx.strokeRect(cell.x * s + 2, cell.y * s + 2, s - 4, s - 4);
+}
+
+// ---- シーカー（移動）-------------------------------------------------------
+function setupSeekerView(who) {
+  ui.debrisControls.classList.add('hidden');
+  ui.moveControls.classList.remove('hidden');
+  ui.dirPad.classList.remove('hidden');
+  ui.boards.classList.remove('king');
+  ui.canvas.onclick = null;
+  ui.canvas2.onclick = null;
+  el('board-label').textContent = `${SEEKER_LABEL[who]}の盤面`;
+  el('board2-label').textContent = '';
+
+  // 囲まれチェック
+  if (!hasAnyLegalMove(state, who)) {
+    resolveStuck(state);
+    flashStatus('動けるマスがありません…王様の勝ち');
+    return showResult();
+  }
+
+  path = [{ ...state[who].pos }];
+  bindDirPad(who);
+  renderSeeker(who);
+  refreshMoveControls(who);
+}
+
+function renderSeeker(who) {
+  drawBoard(ui.canvas, state, {
+    who,
+    reveal: false,
+    preview: path,
+    pieceOverride: path[path.length - 1],
+  });
+}
+
+function bindDirPad(who) {
+  for (const [name, dir] of Object.entries(DIRS)) {
+    const btn = el(`dir-${name}`);
+    btn.onclick = () => {
+      const from = path[path.length - 1];
+      const to = legalStep(state, who, from, dir);
+      if (!to) return;
+      if (path.length - 1 >= state.stepsPerMove) return; // 3手まで
+      path.push(to);
+      renderSeeker(who);
+      refreshMoveControls(who);
+    };
+  }
+  ui.btnUndo.onclick = () => {
+    if (path.length > 1) {
+      path.pop();
+      renderSeeker(who);
+      refreshMoveControls(who);
+    }
+  };
+  ui.btnConfirm.onclick = () => {
+    if (path.length - 1 !== state.stepsPerMove) return;
+    const steps = path.slice(1); // 現在位置を除いた着地マス列
+    applyMove(state, who, steps);
+    if (state.winner) return showResult();
+    beginPhase();
+  };
+}
+
+function refreshMoveControls(who) {
+  const used = path.length - 1;
+  const from = path[path.length - 1];
+  // 方向ボタンの有効/無効
+  for (const [name, dir] of Object.entries(DIRS)) {
+    const legal = used < state.stepsPerMove && legalStep(state, who, from, dir) !== null;
+    el(`dir-${name}`).disabled = !legal;
+  }
+  ui.btnUndo.disabled = path.length <= 1;
+  ui.btnConfirm.disabled = used !== state.stepsPerMove;
+  ui.status.textContent = `移動: ${used} / ${state.stepsPerMove} マス` +
+    (used === state.stepsPerMove ? '（確定できます）' : '（ちょうど3マス動く）');
+}
+
+// ---- 勝敗 ------------------------------------------------------------------
+function showResult() {
+  ui.handoff.classList.add('hidden');
+  const seekersWin = state.winner === 'seekers';
+  ui.overlayTitle.textContent = seekersWin ? '🎋 シーカーの勝ち！' : '👑 王様の勝ち！';
+  ui.overlayText.textContent = seekersWin
+    ? `織姫と彦星は (${state.meetingCell.x}, ${state.meetingCell.y}) で出会えた！`
+    : '規定手番までに二人は出会えなかった…';
+  ui.overlay.classList.remove('hidden');
+  ui.overlayBtn.onclick = start;
+}
+
+// ---- ユーティリティ --------------------------------------------------------
+function cellFromEvent(canvas, evt) {
+  const rect = canvas.getBoundingClientRect();
+  const x = ((evt.clientX - rect.left) / rect.width) * state.size;
+  const y = ((evt.clientY - rect.top) / rect.height) * state.size;
+  const cx = Math.floor(x);
+  const cy = Math.floor(y);
+  if (cx < 0 || cy < 0 || cx >= state.size || cy >= state.size) return null;
+  return { x: cx, y: cy };
+}
+
+let flashTimer = null;
+function flashStatus(msg) {
+  ui.status.textContent = msg;
+  ui.status.classList.add('flash');
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => ui.status.classList.remove('flash'), 900);
+}
+
+// 起動
+window.addEventListener('DOMContentLoaded', () => {
+  el('btn-restart').onclick = start;
+  start();
+});

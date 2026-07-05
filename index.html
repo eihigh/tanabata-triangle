@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>七夕トライアングル</title>
+    <link rel="stylesheet" href="css/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header id="topbar">
+        <h1>七夕トライアングル</h1>
+        <div class="meta">
+          <span id="role-badge" class="badge">織姫</span>
+          <span id="round-info">ラウンド 1 / 7</span>
+          <button id="btn-restart" class="ghost">最初から</button>
+        </div>
+      </header>
+
+      <p id="status" class="status"></p>
+
+      <div id="boards">
+        <figure class="board-wrap">
+          <canvas id="board" width="540" height="540"></canvas>
+          <figcaption id="board-label">織姫の盤面</figcaption>
+        </figure>
+        <figure class="board-wrap board2-wrap">
+          <canvas id="board2" width="540" height="540"></canvas>
+          <figcaption id="board2-label"></figcaption>
+        </figure>
+      </div>
+
+      <!-- シーカー移動コントロール -->
+      <div id="move-controls" class="controls hidden">
+        <div id="dir-pad" class="dir-pad">
+          <button id="dir-up" class="dir">↑</button>
+          <div class="dir-row">
+            <button id="dir-left" class="dir">←</button>
+            <button id="dir-down" class="dir">↓</button>
+            <button id="dir-right" class="dir">→</button>
+          </div>
+        </div>
+        <div class="action-row">
+          <button id="btn-undo" class="ghost">戻す</button>
+          <button id="btn-confirm" class="primary">確定</button>
+        </div>
+      </div>
+
+      <!-- 王様デブリコントロール -->
+      <div id="debris-controls" class="controls hidden">
+        <p class="hint-text">設置対象の盤面で、軌跡の無いマスをクリックしてデブリを選択</p>
+        <button id="btn-place-debris" class="primary">ここに置く</button>
+      </div>
+    </div>
+
+    <!-- パス回しハンドオフ -->
+    <div id="handoff" class="veil hidden">
+      <div class="veil-card">
+        <div class="veil-icon">🤝</div>
+        <p id="handoff-text"></p>
+        <button id="handoff-btn" class="primary big">見る準備ができた</button>
+      </div>
+    </div>
+
+    <!-- 勝敗 -->
+    <div id="overlay" class="veil hidden">
+      <div class="veil-card">
+        <h2 id="overlay-title"></h2>
+        <p id="overlay-text"></p>
+        <button id="overlay-btn" class="primary big">もう一度</button>
+      </div>
+    </div>
+
+    <script type="module" src="js/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,260 @@
+:root {
+  --bg: #0c1020;
+  --panel: #182036;
+  --text: #eef1f8;
+  --muted: #9aa4c0;
+  --accent: #7a5cff;
+  --primary: #2fbf8f;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: radial-gradient(circle at 50% -10%, #1b2547 0%, var(--bg) 60%);
+  color: var(--text);
+  font-family: "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+  min-height: 100vh;
+}
+
+#app {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 16px 16px 40px;
+}
+
+#topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#topbar h1 {
+  font-size: 1.25rem;
+  margin: 0;
+  letter-spacing: 0.04em;
+}
+
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.badge {
+  padding: 3px 12px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 0.85rem;
+  background: #e84a8a;
+  color: #fff;
+}
+
+#round-info {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.status {
+  min-height: 1.4em;
+  margin: 10px 2px;
+  color: var(--muted);
+  font-size: 0.92rem;
+  transition: color 0.2s;
+}
+
+.status.flash {
+  color: #ffb454;
+  font-weight: 600;
+}
+
+/* 盤面 */
+#boards {
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+}
+
+.board-wrap {
+  margin: 0;
+  flex: 1 1 0;
+  max-width: 540px;
+}
+
+.board2-wrap {
+  display: none;
+}
+
+#boards.king .board2-wrap {
+  display: block;
+}
+
+#boards.king .board-wrap {
+  max-width: 360px;
+}
+
+canvas {
+  width: 100%;
+  height: auto;
+  border-radius: 10px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
+  display: block;
+  cursor: pointer;
+}
+
+figcaption {
+  text-align: center;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* コントロール */
+.controls {
+  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.dir-pad {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.dir-row {
+  display: flex;
+  gap: 8px;
+}
+
+.dir {
+  width: 62px;
+  height: 62px;
+  font-size: 1.6rem;
+  border-radius: 12px;
+  border: none;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  transition: transform 0.08s, background 0.15s;
+}
+
+.dir:hover:not(:disabled) {
+  background: #232d4c;
+}
+
+.dir:active:not(:disabled) {
+  transform: scale(0.92);
+}
+
+button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.action-row {
+  display: flex;
+  gap: 12px;
+}
+
+.primary,
+.ghost {
+  border: none;
+  border-radius: 10px;
+  padding: 12px 22px;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.primary {
+  background: var(--primary);
+  color: #04231a;
+}
+
+.ghost {
+  background: transparent;
+  border: 1px solid #38416a;
+  color: var(--text);
+  padding: 8px 16px;
+  font-size: 0.85rem;
+}
+
+.primary.big {
+  padding: 16px 36px;
+  font-size: 1.1rem;
+}
+
+.hint-text {
+  color: var(--muted);
+  font-size: 0.9rem;
+  text-align: center;
+  margin: 0;
+}
+
+/* ベール（ハンドオフ／勝敗） */
+.veil {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 9, 20, 0.92);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+
+.veil-card {
+  text-align: center;
+  padding: 32px;
+  max-width: 380px;
+}
+
+.veil-icon {
+  font-size: 3rem;
+  margin-bottom: 12px;
+}
+
+.veil-card h2 {
+  font-size: 1.6rem;
+  margin: 0 0 12px;
+}
+
+.veil-card p {
+  font-size: 1.15rem;
+  line-height: 1.6;
+  margin: 0 0 24px;
+}
+
+.handoff-detail {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.hidden {
+  display: none !important;
+}
+
+@media (max-width: 560px) {
+  #boards.king {
+    flex-direction: column;
+    align-items: center;
+  }
+  #boards.king .board-wrap {
+    max-width: 100%;
+    width: 100%;
+  }
+  .dir {
+    width: 54px;
+    height: 54px;
+  }
+}
