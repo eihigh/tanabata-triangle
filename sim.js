@@ -76,6 +76,10 @@
  *   --jvariant : デブリの効き方 shared | private（省略時 shared）
  *              shared=両者共通の盤・両者に公開 / private=次に動く側だけに効き、相手には見えない
  *   --jcap   : デブリ総数の上限（省略時 実質無制限=毎移動1個）
+ *   --jpass  : 通過可能デブリ（実験21のルール変更案）。デブリは「着地（移動先）には
+ *              選べないが、通過（飛び越し）は自由。そのマスの軌跡は読めない＝そこで
+ *              起きる交差は恒久的に開示されない」。壁による分断の"完成"（神目線で
+ *              どうやっても会えない盤面）が構造的に不可能になる。
  *   --jinit  : 開始前の布石数。各盤の内側（外周を除く）に jinit 個ずつ置く（合計 2×jinit、
  *              省略時 0）。N=0〜3 の難易度レバー。外周は詰み防止で禁止。
  *   --sgate  : split2 の距離ゲート。mover から相手軌跡までの距離がこれ以下のときだけ
@@ -472,36 +476,36 @@ function ojamaPlace(board, cfg, blocks, posA, posB, mover, rng, day, crossHints,
   // splitwall: mover と相手軌跡の間に壁を築く（軌跡への min-cut）
   else if (cfg.ojama === 'splitwall') cell = splitWallCell(board, blockedArr, from, to, oppTrail);
   // herd: mover の予測最善着地（期待出目で相手に最も寄れるマス）を先回りして塞ぐ操舵
-  else if (cfg.ojama === 'herd') cell = herdCell(board, blockedArr, from, to, board.expRoll);
+  else if (cfg.ojama === 'herd') cell = herdCell(board, blockedArr, from, to, board.expRoll, cfg.jpass);
   // cherd: 検閲を最優先し、無ければ herd の操舵
   else if (cfg.ojama === 'cherd') {
     cell = censorCell(board, blockedArr, crossHints, opp);
-    if (cell < 0) cell = herdCell(board, blockedArr, from, to, board.expRoll);
+    if (cell < 0) cell = herdCell(board, blockedArr, from, to, board.expRoll, cfg.jpass);
   }
   // mmx: 1手先読みミニマックス（mover の最善応答後の対相手期待距離を最大化する操舵）
-  else if (cfg.ojama === 'mmx') cell = minimaxCell(board, blockedArr, from, to, crossHints);
+  else if (cfg.ojama === 'mmx') cell = minimaxCell(board, blockedArr, from, to, crossHints, cfg.jpass);
   // bmmx: belief版1手先読み（mover の実際の着地選択を belief で再現して読む）
   else if (cfg.ojama === 'bmmx') {
     cell = censorInfo ? beliefMinimaxCell(board, blockedArr, from, to, censorInfo.belief, crossHints) : -1;
-    if (cell < 0) cell = minimaxCell(board, blockedArr, from, to, crossHints);
+    if (cell < 0) cell = minimaxCell(board, blockedArr, from, to, crossHints, cfg.jpass);
   }
   // sever: ★採用・分断キング（実験19）。検閲を最優先し、無ければ bmmx の belief操舵
   else if (cfg.ojama === 'sever') {
     cell = censorCell(board, blockedArr, crossHints, opp);
-    if (cell < 0 && censorInfo) cell = beliefMinimaxCell(board, blockedArr, from, to, censorInfo.belief, crossHints);
+    if (cell < 0 && censorInfo) cell = beliefMinimaxCell(board, blockedArr, from, to, censorInfo.belief, crossHints, cfg.jpass);
   }
   // severm: sever の操舵の前に「射程内なら相手の最終進入路（堀）」を挟む合成の実験
   else if (cfg.ojama === 'severm') {
     cell = censorCell(board, blockedArr, crossHints, opp);
     if (cell < 0 && board.d(from, to) <= board.maxRoll) cell = moatCell(board, blockedArr, from, to);
-    if (cell < 0 && censorInfo) cell = beliefMinimaxCell(board, blockedArr, from, to, censorInfo.belief, crossHints);
+    if (cell < 0 && censorInfo) cell = beliefMinimaxCell(board, blockedArr, from, to, censorInfo.belief, crossHints, cfg.jpass);
   }
   // adapt: 検閲は常に最優先（物理封鎖として約束事にも推理にも最強）。ヒントが無い手番の
   // フォールバックだけを、mover の着地履歴の分類で afocal（約束事型）/ bmmx（推理型）に切り替える
   else if (cfg.ojama === 'adapt') {
     cell = censorCell(board, blockedArr, crossHints, opp);
     if (cell < 0 && !adaptIsFocalish(intel) && censorInfo) {
-      cell = beliefMinimaxCell(board, blockedArr, from, to, censorInfo.belief, crossHints);
+      cell = beliefMinimaxCell(board, blockedArr, from, to, censorInfo.belief, crossHints, cfg.jpass);
     }
     if (cell < 0) cell = afocalCell(board, blockedArr, posA, posB, target, false);
   }
@@ -520,7 +524,7 @@ function ojamaPlace(board, cfg, blocks, posA, posB, mover, rng, day, crossHints,
   // cmmx: 検閲を最優先し、無ければ mmx の操舵
   else if (cfg.ojama === 'cmmx') {
     cell = censorCell(board, blockedArr, crossHints, opp);
-    if (cell < 0) cell = minimaxCell(board, blockedArr, from, to, crossHints);
+    if (cell < 0) cell = minimaxCell(board, blockedArr, from, to, crossHints, cfg.jpass);
   }
   // acensor: afocal の焦点封鎖を基本に、F 近傍で交差を兼ねるマスがあれば検閲を上乗せ（併用）
   else if (cfg.ojama === 'acensor') cell = afocalCensorCell(board, blockedArr, posA, posB, target, crossHints);
@@ -740,12 +744,19 @@ function splitCell(board, blockedArr, moverPos, oppPos, oppTrail) {
 // herd（操舵）: mover の「予測最善着地」（期待出目 E で到達できるマスのうち相手に最も近いマス
 // ＝greedy の代理モデル）を先回りして塞ぐ。毎手番 mover の狙い筋を1マスずつ潰すので、
 // デブリが mover の進行レーンに沿って壁として育つ＝「向かわせない」操舵の素朴な定式化。
-function herdCell(board, blockedArr, moverPos, oppPos, expRoll) {
-  const layers = computeLayers(board, moverPos, expRoll, blockedArr);
-  const Lk = layers[expRoll];
+function herdCell(board, blockedArr, moverPos, oppPos, expRoll, jpass) {
+  let cand;
+  if (jpass) {
+    cand = board.reach[moverPos][expRoll];
+  } else {
+    const layers = computeLayers(board, moverPos, expRoll, blockedArr);
+    const Lk = layers[expRoll];
+    cand = [];
+    for (let q = 0; q < board.size; q++) if (Lk[q]) cand.push(q);
+  }
   let best = -1, bd = Infinity;
-  for (let q = 0; q < board.size; q++) {
-    if (!Lk[q] || blockedArr[q] || q === moverPos || q === oppPos) continue;
+  for (const q of cand) {
+    if (blockedArr[q] || q === moverPos || q === oppPos) continue;
     const d = board.d(q, oppPos);
     if (d < bd) { bd = d; best = q; }
   }
@@ -757,7 +768,7 @@ function herdCell(board, blockedArr, moverPos, oppPos, expRoll) {
 // を実際に計算し、V を最大化する c を選ぶ＝mover を最も相手から遠ざける操舵。
 // greedy シーカーの目的関数（相手への接近）を代理モデルとして敵対的に1手読む。
 // タイブレークは検閲を兼ねるマス（発生済み交差ヒント）を優先。
-function minimaxCell(board, blockedArr, moverPos, oppPos, crossHints) {
+function minimaxCell(board, blockedArr, moverPos, oppPos, crossHints, jpass) {
   const size = board.size;
   const D = board.d(moverPos, oppPos);
   const hintSet = (crossHints && crossHints.length) ? new Set(crossHints) : null;
@@ -774,18 +785,26 @@ function minimaxCell(board, blockedArr, moverPos, oppPos, crossHints) {
   let best = -1, bs = -Infinity;
   for (const c of cands) {
     trial[c] = 1;
-    const layers = computeLayers(board, moverPos, board.maxRoll, trial);
+    const layers = jpass ? null : computeLayers(board, moverPos, board.maxRoll, trial);
     let v = 0;
     for (let s = board.minRoll; s <= board.maxRoll; s++) {
       const ps = board.diceProbs[s];
       if (!ps) continue;
-      const Lk = layers[s];
       let md = D; // 動けない出目なら現状距離のまま
       let any = false;
-      for (let q = 0; q < size; q++) {
-        if (!Lk[q]) continue;
-        const d = board.d(q, oppPos);
-        if (!any || d < md) { md = d; any = true; }
+      if (jpass) {
+        for (const q of board.reach[moverPos][s]) {
+          if (trial[q]) continue;
+          const d = board.d(q, oppPos);
+          if (!any || d < md) { md = d; any = true; }
+        }
+      } else {
+        const Lk = layers[s];
+        for (let q = 0; q < size; q++) {
+          if (!Lk[q]) continue;
+          const d = board.d(q, oppPos);
+          if (!any || d < md) { md = d; any = true; }
+        }
       }
       v += ps * md;
     }
@@ -847,7 +866,7 @@ function moatCell(board, blockedArr, moverPos, oppPos) {
 // コンテキスト）で greedy の着地選択そのものを再現し、各候補デブリに対する mover の
 // 最善応答着地 L* を正確に予測。真の相手位置との事後距離 E_s[d(L*, O)] を最大化する
 // マスに置く＝「mover が実際に向かう先」を読んで最も遠回りさせる操舵。
-function beliefMinimaxCell(board, blockedArr, moverPos, oppPos, belief, crossHints) {
+function beliefMinimaxCell(board, blockedArr, moverPos, oppPos, belief, crossHints, jpass) {
   if (!belief) return -1;
   const size = board.size;
   const D = board.d(moverPos, oppPos);
@@ -866,15 +885,21 @@ function beliefMinimaxCell(board, blockedArr, moverPos, oppPos, belief, crossHin
   let best = -1, bs = -Infinity;
   for (const c of cands) {
     trial[c] = 1;
-    const layers = computeLayers(board, moverPos, board.maxRoll, trial);
+    const layers = jpass ? null : computeLayers(board, moverPos, board.maxRoll, trial);
     let v = 0;
     for (let s = board.minRoll; s <= board.maxRoll; s++) {
       const ps = board.diceProbs[s];
       if (!ps) continue;
-      const Lk = layers[s];
       let bl = -1, bsc = -Infinity;
-      for (let q = 0; q < size; q++) {
-        if (Lk[q] && sc[q] > bsc) { bsc = sc[q]; bl = q; }
+      if (jpass) {
+        for (const q of board.reach[moverPos][s]) {
+          if (!trial[q] && sc[q] > bsc) { bsc = sc[q]; bl = q; }
+        }
+      } else {
+        const Lk = layers[s];
+        for (let q = 0; q < size; q++) {
+          if (Lk[q] && sc[q] > bsc) { bsc = sc[q]; bl = q; }
+        }
       }
       v += ps * (bl >= 0 ? board.d(bl, oppPos) : D);
     }
@@ -1423,13 +1448,20 @@ function playGame(board, cfg, rng) {
       const roll = rollDice();
       const myBlocks = jOn ? blocks[pi] : null;
 
-      // 到達集合と経路サンプラ（デブリがあれば層状DP、なければ高速な事前計算）
+      // 到達集合と経路サンプラ（デブリがあれば層状DP、なければ高速な事前計算）。
+      // --jpass: デブリは通過自由・着地のみ不可なので、移動は開盤どおり＝着地候補から
+      // デブリマスを除くだけ（経路サンプラも開盤の samplePath を使う）。
       let reach, layers = null;
       if (jOn && debrisCount > 0) {
-        layers = computeLayers(board, me.pos, roll, myBlocks);
-        reach = [];
-        const Lk = layers[roll];
-        for (let q = 0; q < size; q++) if (Lk[q]) reach.push(q);
+        if (cfg.jpass) {
+          reach = [];
+          for (const q of board.reach[me.pos][roll]) if (!myBlocks[q]) reach.push(q);
+        } else {
+          layers = computeLayers(board, me.pos, roll, myBlocks);
+          reach = [];
+          const Lk = layers[roll];
+          for (let q = 0; q < size; q++) if (Lk[q]) reach.push(q);
+        }
       } else {
         reach = board.reach[me.pos][roll];
       }
@@ -1451,7 +1483,9 @@ function playGame(board, cfg, rng) {
         // いま自分の盤にデブリが乗っているマス＝この手番で新たに置かれた＝検閲された交差、と分かる。
         // 相手の経路を知らずとも「自分の経路∩自分の盤の新デブリ」だけで censored 交差を復元できる。
         if (cfg.aware === 'censor' && deb) {
-          for (const x of me.lastPathCells) if (deb[x]) preCross.push(x);
+          for (const x of me.lastPathCells) {
+            if (deb[x] && !(me.lastPathDebSet && me.lastPathDebSet.has(x))) preCross.push(x);
+          }
         }
         const uniqPre = [...new Set(preCross)];
         // 自分の直前経路で交差しなかったマス＝相手は通っていない（負の情報）。
@@ -1471,7 +1505,7 @@ function playGame(board, cfg, rng) {
       if (reach.length === 0) {
         stuck++;
         // 閉じ込め診断: 詰み手番でも成分サイズを記録する（完全密封 comp=1 を見逃さない）
-        if (jOn && debrisCount > 0) {
+        if (jOn && debrisCount > 0 && !cfg.jpass) {
           const occ = myBlocks[op.pos];
           if (occ) myBlocks[op.pos] = 0;
           const dMe = bfsDist(board, me.pos, myBlocks);
@@ -1484,6 +1518,7 @@ function playGame(board, cfg, rng) {
         }
         me.stamp[me.pos] = turn;
         me.lastPathCells = [me.pos];
+        me.lastPathDebSet = null;
         me.lastRoll = roll;
         me.moved = true;
         // belief 更新は簡略化のため省略（詰みは稀なイベント）
@@ -1537,13 +1572,17 @@ function playGame(board, cfg, rng) {
       const prevLastPath = me.lastPathCells;
       me.pos = landing;
       me.lastPathCells = [...new Set(path)];
+      // --jpass: 歩行時点でデブリだったマス（通過しただけ）を記録。検閲リーク推理は
+      // 「歩いた時は空きだった経路上の新デブリ」だけを検閲と読むべきで、既存デブリの
+      // 通過を誤検知しないための正当な自己記録（自盤のデブリは本人に見えている）。
+      me.lastPathDebSet = (cfg.jpass && myBlocks) ? new Set(path.filter(x => myBlocks[x])) : null;
       me.lastRoll = roll;
       me.moved = true;
 
       // 閉じ込め診断: 着地後の自盤の連結成分サイズ・片側分断・回遊。
       // 相手が「自盤のデブリの上」に立っている一時的な状態を分断と誤認しないよう、
       // 相手の立ちマスは空きとみなして到達可能性を測る（構造的な壁だけを数える）。
-      if (jOn && debrisCount > 0) {
+      if (jOn && debrisCount > 0 && !cfg.jpass) {
         const occ = myBlocks[op.pos];
         if (occ) myBlocks[op.pos] = 0;
         const dMe = bfsDist(board, me.pos, myBlocks);
@@ -1643,7 +1682,7 @@ function playGame(board, cfg, rng) {
   // 敗北（タイムアウト）。相互分断: A は自盤で B の位置に到達できず、B も自盤で A に到達できない
   // ＝どちらも構造的に相手のマスへ着地できない詰み型の負け。
   let splitLoss = false;
-  if (jOn && debrisCount > 0) {
+  if (jOn && debrisCount > 0 && !cfg.jpass) {
     // 相手の立ちマスは空き扱い（相手が自盤のデブリの上に立つ一時状態を分断と数えない）
     const occB = blocks[0][players[1].pos];
     if (occB) blocks[0][players[1].pos] = 0;
@@ -1811,6 +1850,7 @@ function main() {
     else if (a.startsWith('--jvariant=')) flags.jvariant = a.slice(11);
     else if (a.startsWith('--jcap=')) flags.jcap = +a.slice(7);
     else if (a.startsWith('--jinit=')) flags.jinit = +a.slice(8);
+    else if (a === '--jpass') flags.jpass = true;
     else if (a.startsWith('--sgate=')) flags.sgate = +a.slice(8);
     else if (a === '--trap') flags.trap = true;
     else if (a === '--tracetrap') flags.tracetrap = true;
@@ -1856,7 +1896,7 @@ function main() {
         share: !!flags.share, oppModel: flags.opp || 'random', seed: flags.seed || 12345,
         eps: flags.eps || 0, jeps: flags.jeps || 0,
         ojama: flags.ojama || 'none', jvariant: flags.jvariant || 'shared', jcap: flags.jcap, jinit: flags.jinit || 0,
-        sgate: flags.sgate, tracetrap: !!flags.tracetrap,
+        sgate: flags.sgate, tracetrap: !!flags.tracetrap, jpass: !!flags.jpass,
         mob: flags.mob || 0, soft: flags.soft || 0, safe: flags.safe || 0,
         aware: flags.aware || null, sharedCross: !!flags.sharedCross,
         precross: !!flags.precross,
@@ -1864,7 +1904,7 @@ function main() {
         pfocal: flags.pfocal || 'center', jasym: !!flags.jasym, jdump: !!flags.jdump,
         jinterior: !!flags.jinterior,
       };
-      const jl = cfg.ojama !== 'none' ? ` 邪魔${cfg.ojama}-${cfg.jvariant}${cfg.jcap != null ? `(上限${cfg.jcap})` : ''}${cfg.jinit ? `(布石${cfg.jinit}${cfg.jasym ? '非対称' : ''})` : ''}${cfg.jinterior ? '(外周禁止)' : ''}` : '';
+      const jl = cfg.ojama !== 'none' ? ` 邪魔${cfg.ojama}-${cfg.jvariant}${cfg.jpass ? '(通過可)' : ''}${cfg.jcap != null ? `(上限${cfg.jcap})` : ''}${cfg.jinit ? `(布石${cfg.jinit}${cfg.jasym ? '非対称' : ''})` : ''}${cfg.jinterior ? '(外周禁止)' : ''}` : '';
       const pl = cfg.pfocal && cfg.pfocal !== 'center' ? `[${cfg.pfocal}]` : '';
       const label = `${N}x${N} ${dice.label} ${maxDay}日 減衰${decay} ${policy}${pl}${cfg.aware ? `(認識${cfg.aware})` : ''}${cfg.mob ? `(可動${cfg.mob})` : ''}${cfg.soft ? `(揺${cfg.soft})` : ''}${cfg.safe ? `(安全${cfg.safe})` : ''}${cfg.eps ? `(ε=${cfg.eps})` : ''}${cfg.jeps ? `(κε=${cfg.jeps})` : ''}${cfg.share ? '+出目' : ''}${cfg.precross ? '+先交差' : ''}${cfg.oppModel === 'greedy' ? ' oppV2' : ''}${jl}`;
       const res = runCondition(cfg);
