@@ -199,7 +199,7 @@
     <div class="panel">
       <div class="role-card" style="margin-bottom:0;">
         <div class="role-head"><span class="role-dot ojama"></span>使うサイコロ</div>
-        <div class="note" style="margin:2px 0 8px;">合計ちょうどの歩数で移動。2d4が標準。1d6はキング有利だが交差が出にくい。</div>
+        <div class="note" style="margin:2px 0 8px;">合計ちょうどの歩数で移動。1d6振1が標準。1d6はキングの地力が最も出る上級向け。</div>
         <div class="opts" id="opts-dice"></div>
       </div>
     </div>
@@ -223,8 +223,8 @@
         <li>二人のシーカーは互いの位置が見えない。7×7・サイコロの合計ちょうどで移動。</li>
         <li>手番の頭で、<b>自分の直前の道</b>と<b>相手の直前の道</b>が重なった交差マス✦が<b>自分だけ</b>に見える。それを見てから動く。</li>
         <li>ゲーム開始前、キングは<b>布石</b>として各盤の<b>内側（外周を除く）</b>にN個ずつデブリを置ける（計2N個・N=0～3の難易度）。</li>
-        <li><b>初日</b>は 織姫→彦星 が動くだけ。<b>2日目以降</b>は各シーカーが動く<b>直前</b>に、キングがその盤へ<b>デブリ</b>（通れないマス）を1つ置く。デブリは<b>置かれた本人にしか見えない</b>。</li>
-        <li>キングが<b>交差マス✦の上にデブリを置く</b>と、その交差ヒントはシーカーに<b>開示されず検閲</b>される。合流点を塞ぐか、手がかりを消すかを選べる。</li>
+        <li><b>初日</b>は 織姫→彦星 が動くだけ。<b>2日目以降</b>は各シーカーが動く<b>直前</b>に、キングがその盤へ<b>デブリ</b>を1つ置く。デブリのマスには<b>止まれない</b>（移動先に選べない）が、<b>通過（飛び越し）は自由</b>。デブリは<b>置かれた本人にしか見えない</b>。</li>
+        <li>キングが<b>交差マス✦の上にデブリを置く</b>と、その交差ヒントは<b>開示されず検閲</b>される。さらにデブリのマスは以後もヒントが出ない<b>恒久的な盲点</b>になる。合流点への着地を拒むか、手がかりを消すかを選べる。</li>
         <li>日数制限（normal 7日／hard 3日）以内に二人が<b>同じマス</b>に立てば探す側の勝ち。会えなければキングの勝ち。</li>
       </ul>
     </div>
@@ -308,12 +308,14 @@ const RNAME={orihime:'シーカー（織姫）',hikoboshi:'シーカー（彦星
 const SEEKER_AIS=[
   {id:'human',label:'人間',tag:'あなたが操作'},
   {id:'greedy',label:'AI推理',tag:'交差から推定'},
+  {id:'infogain',label:'AI探索推理',tag:'手がかりを取りに行く'},
   {id:'center',label:'AI中心集合',tag:'中心で待ち合わせ'},
   {id:'wander',label:'AI変幻集合',tag:'集合点を動かす'},
   {id:'random',label:'AIランダム',tag:'でたらめ'},
 ];
 const OJAMA_AIS=[
   {id:'human',label:'人間',tag:'あなたが操作'},
+  {id:'sever',label:'AI分断',tag:'手を読んで遠ざけ、ヒントを消す'},
   {id:'censor',label:'AI検閲',tag:'交差ヒントを消しつつ合流点を潰す'},
   {id:'afocal',label:'AI焦点破り',tag:'合流点を左右非対称に潰す'},
   {id:'chase',label:'AI追尾',tag:'合流点を毒す'},
@@ -332,11 +334,12 @@ const DIFF_OPTS=[
   {id:7,label:'normal',tag:'7日制限（標準）'},
   {id:3,label:'hard',tag:'3日制限（上級）'},
 ];
-/* 使うサイコロ：1d6振1（標準・1で振り直し）／ 2d4／ 1d6（キング激辛・交差痩せ）／ 2d6（旧標準）／ 1d6振2（1・2で振り直し） */
+/* 使うサイコロ：1d6振1（標準・1で振り直し）／ 2d4／ 1d6（キングの地力が最も出る上級）／
+   2d6（旧標準）／ 1d6振2（1・2で振り直し）。通過可能デブリ（実験21）で1d6の交差痩せは解消済み */
 const DICE_OPTS=[
   {id:'1,6,1',label:'1d6振1',tag:'1で振り直し（標準）'},
   {id:'2,4',label:'2d4',tag:'4面2個'},
-  {id:'1,6',label:'1d6',tag:'6面1個（キング有利）'},
+  {id:'1,6',label:'1d6',tag:'6面1個（キング有利・上級）'},
   {id:'2,6',label:'2d6',tag:'6面2個（シーカー有利）'},
   {id:'1,6,2',label:'1d6振2',tag:'1・2で振り直し'},
 ];
@@ -353,7 +356,8 @@ const NB=[];
 for(let a=0;a<SZ;a++){const[r,c]=rc(a),l=[];if(r>0)l.push(a-N);if(r<N-1)l.push(a+N);if(c>0)l.push(a-1);if(c<N-1)l.push(a+1);NB.push(l);}
 const PERIM=[];
 for(let a=0;a<SZ;a++){const[r,c]=rc(a);if(r===0||c===0||r===N-1||c===N-1)PERIM.push(a);}
-/* 内側マス（外周を除く）― 布石の配置可能範囲。外周に置くとシーカーを詰ませてしまうので除外 */
+/* 内側マス（外周を除く）― 布石の配置可能範囲。sim と共通の布石ルール（通過可能デブリでは
+   詰み防止の意味は薄れたが互換のため外周除外を維持） */
 const INTERIOR=[];
 for(let a=0;a<SZ;a++){const[r,c]=rc(a);if(r>0&&c>0&&r<N-1&&c<N-1)INTERIOR.push(a);}
 
@@ -466,7 +470,7 @@ function aiType(role){return G.cfg.roles[role];}
 function isHuman(role){return G.cfg.roles[role]==='human';}
 
 /* ===== 設定画面 ===== */
-const selection={orihime:'human',hikoboshi:'greedy',ojama:'censor',jinit:2,maxDay:7,dice:'1,6,1'};
+const selection={orihime:'human',hikoboshi:'greedy',ojama:'sever',jinit:2,maxDay:7,dice:'1,6,1'};
 function buildOpts(role,list){
   const holder=$('opts-'+role);holder.innerHTML='';
   for(const o of list){
@@ -751,13 +755,14 @@ function renderBoardSeek(){
   const ncSet=new Set(G.preCross||[]); // 先交差：手番中はじめに判明した交差を常にハイライト
   for(let c=0;c<SZ;c++){
     const d=document.createElement('div');d.className='cell';
+    // 通過可能デブリ: 止まれないだけなので、軌跡・経路プレビューはデブリの上にも重ねて描く
     if(deb[c])d.classList.add('debris');
-    else{
-      if(st[c]>NEG)d.classList.add('trail');
-      if(lastSet.has(c))d.classList.add('lastpath');
+    if(st[c]>NEG)d.classList.add('trail');
+    if(lastSet.has(c))d.classList.add('lastpath');
+    if(prevSet.has(c)&&c!==myPos)d.classList.add('pathprev');
+    if(!deb[c]){
       if(G.knownCross[idx].has(c))d.classList.add('cross');
       if(ncSet.has(c))d.classList.add('newcross');
-      if(prevSet.has(c)&&c!==myPos)d.classList.add('pathprev');
       if(c===myPos)d.classList.add('me',idx===0?'orihime':'hikoboshi');
       if(reachSet.has(c)){d.classList.add('reach');if(c===G.sel)d.classList.add('sel');d.onclick=()=>pickCell(c);}
     }
@@ -768,8 +773,10 @@ function renderBoardSeek(){
 $('s-roll').onclick=()=>{
   const r=rollDice();G.roll=r.sum;G.dice=r.dice; // 実際の各サイコロの目を見せる（1d6は1個、2dXは2個）
   G.sel=null;G.selPath=null;
-  G.layers=computeLayers(G.pos[G._idx],G.roll,G.debris[G._idx]);
-  G.reach=[...G.layers[G.roll]];
+  // 通過可能デブリ（実験21）: 経路はデブリを飛び越せる（開盤で計算）。着地だけ選べない。
+  const deb=G.debris[G._idx];
+  G.layers=computeLayers(G.pos[G._idx],G.roll,null);
+  G.reach=[...G.layers[G.roll]].filter(c=>!deb[c]);
   if(G.reach.length===0){ // 詰み
     applyStuck(G._idx,G.roll);G._phase='done';G.lastCross=[];renderSeeker();
   }else{G._phase='pick';renderSeeker();}
@@ -807,8 +814,8 @@ function openOjama(target){
   const tn=target===0?'シーカー（織姫）':'シーカー（彦星）';
   const xc=wouldCross(target).length;
   $('o-info').innerHTML=`二人の距離 <b>${dist(G.pos[0],G.pos[1])}</b>　置いた総数 <b>${totalDebris()}</b>`;
-  $('o-prompt').innerHTML=`このあと動く <span class="em">${tn}</span> の盤にデブリを1つ。合流点を塞ぐか、`
-    +(xc>0?`<b>✦の交差マス（${xc}）</b>に置いて<b>ヒントを検閲</b>しよう。`:`交差ヒントの出る前に道を塞ごう。`);
+  $('o-prompt').innerHTML=`このあと動く <span class="em">${tn}</span> の盤にデブリを1つ（止まれないが通過はできる）。`
+    +(xc>0?`<b>✦の交差マス（${xc}）</b>に置いて<b>ヒントを検閲</b>するか、合流点への着地を拒もう。`:`合流点への<b>着地を拒む</b>か、ヒントの出そうな道を<b>恒久的な盲点</b>にしよう。`);
   $('o-confirm').disabled=true;
   $('o-confirm').textContent='ここにデブリを置く';
   renderBoardOjama();show('screen-ojama');
@@ -829,8 +836,8 @@ function renderBoardOjama(){
     for(let c=0;c<SZ;c++){
       const d=document.createElement('div');d.className='cell';
       if(G.debris[idx][c])d.classList.add('debris');
-      else{
-        if(G.stamp[idx][c]>NEG)d.classList.add('trail','trail'+idx);
+      if(G.stamp[idx][c]>NEG)d.classList.add('trail','trail'+idx);
+      if(!G.debris[idx][c]){
         if(xhint.has(c))d.classList.add('crosshint');
         if(c===G.pos[0])d.classList.add('p0');
         if(c===G.pos[1])d.classList.add('p1');
@@ -911,13 +918,31 @@ function focalGoalFor(type,deb){
   if(deb&&deb[goal]){let bg=goal,bd=Infinity;for(let q=0;q<SZ;q++){if(deb[q])continue;const d=dist(q,goal);if(d<bd){bd=d;bg=q;}}goal=bg;}
   return goal;
 }
-function chooseSeekerLanding(idx,type,reach){
+function chooseSeekerLanding(idx,type,reach,layers,roll){
   if(type==='random')return reach[(Math.random()*reach.length)|0];
   if(type==='center'||type==='wander'){
     const goal=focalGoalFor(type,G.debris[idx]);let best=reach[0],bd=Infinity;
     for(const L of reach){const d=dist(L,goal)+Math.random()*1e-6;if(d<bd){bd=d;best=L;}}return best;
   }
-  // greedy
+  // infogain（実験20で復活）: belief の濃い領域を実際に通る経路がどれだけ横断するかを稼ぐ。
+  // sever（分断キング）は「相手は greedy」という応答予測で操舵するため、別の目的関数で
+  // 動くと予測が外れて空振りしやすい＝読まれにくさとしても機能する。
+  if(type==='infogain'&&layers){
+    const b=G.belief[idx];
+    const sm=new Float64Array(SZ);
+    for(let q=0;q<SZ;q++){const w=b[q];if(w<=1e-15)continue;
+      for(let x=0;x<SZ;x++){const dd=dist(q,x);if(dd<=2)sm[x]+=w*(3-dd);}}
+    let best=reach[0],bs=-Infinity;
+    for(const L of reach){
+      const path=onePathFromLayers(layers,L,roll);
+      const seen=new Set();let info=0;
+      for(const x of path)if(!seen.has(x)){seen.add(x);info+=sm[x];}
+      const sc=200*b[L]+info-0.01*expectedDist(b,L)+Math.random()*1e-6;
+      if(sc>bs){bs=sc;best=L;}
+    }
+    return best;
+  }
+  // greedy（infogain で layers が無い場合もここへ）
   const b=G.belief[idx];let best=reach[0],bs=-Infinity;
   for(const L of reach){const s=200*b[L]-expectedDist(b,L)+Math.random()*1e-6;if(s>bs){bs=s;best=L;}}
   return best;
@@ -939,6 +964,43 @@ function chooseOjamaCellFrom(type,legal,target){
   //   nearest-opp ヒューリスティックと同等（±0.4pt）でしかなかった＝点の選び方は二次的で、
   //   効いているのは「交差を1つ消す＋物理封鎖」という事実自体。よって単純な近傍式を採用
   //   （否定的結果：SIMULATION.md 実験15-6）。
+  // sever（採用・実験19/21）: 分断キング。①発生済みの交差ヒント✦を検閲（censorと同じ）→
+  // ②belief操舵: シーカーの belief（キングが観測できる情報から再構成できる正当な読み）で
+  //   greedy の着地選択を再現し、各候補デブリに対する最善応答着地 L* を予測。
+  //   「置くと相手から最も遠回りさせられるマス」＝E_s[d(L*,相手)] を最大化するマスに置く。
+  //   通過可能デブリでは着地拒否だけで経路は曲がらないぶん、censor との差は小さい（実験21）。
+  // ③交差も belief 予測も使えない場面（布石・序盤）は afocal の焦点封鎖へフォールバック。
+  if(type==='sever'){
+    const legalSet=new Set(legal),me=target===0?A:B,opp=target===0?B:A;
+    const hints=wouldCross(target).filter(c=>legalSet.has(c));
+    if(hints.length){
+      let best=null,bd=Infinity;
+      for(const c of hints){const d=dist(c,opp);if(d<bd){bd=d;best=c;}}
+      if(best!=null)return best;
+    }
+    if(G.moved[0]&&G.moved[1]){
+      const b=G.belief[target];
+      const sc=new Float64Array(SZ);
+      for(let L=0;L<SZ;L++)sc[L]=200*b[L]-expectedDist(b,L);
+      const deb=G.debris[target];
+      const cands=legal.filter(c=>dist(c,me)<=MAXROLL&&dist(c,me)+dist(c,opp)<=D+2);
+      if(cands.length){
+        let best=null,bv=-Infinity;
+        for(const c of cands){
+          let v=0;
+          for(let s2=MINROLL;s2<=MAXROLL;s2++){
+            const ps=DICE_PROBS[s2];if(!ps)continue;
+            let bl=-1,bsc=-Infinity;
+            for(const q of reachExact(me,s2)){if(deb[q]||q===c)continue;if(sc[q]>bsc){bsc=sc[q];bl=q;}}
+            v+=ps*(bl>=0?dist(bl,opp):D);
+          }
+          if(v>bv){bv=v;best=c;}
+        }
+        if(best!=null)return best;
+      }
+    }
+    type='afocal';
+  }
   if(type==='censor'){
     const legalSet=new Set(legal),opp=target===0?B:A;
     const hints=wouldCross(target).filter(c=>legalSet.has(c));
@@ -989,11 +1051,13 @@ function runAI(role,actor){
       const idx=actor.idx,type=aiType(role);
       seekerTurnStart(idx); // 先交差：振る前に交差を照合して belief 更新
       const r=rollDice(true);const roll=r.sum;
-      const layers=computeLayers(G.pos[idx],roll,G.debris[idx]);
-      const reach=[...layers[roll]];
+      // 通過可能デブリ: 経路は開盤、着地からデブリを除くだけ
+      const deb=G.debris[idx];
+      const layers=computeLayers(G.pos[idx],roll,null);
+      const reach=[...layers[roll]].filter(c=>!deb[c]);
       if(reach.length===0){applyStuck(idx,roll);line=`出目${roll}：止まれるマスが無く足止め。`;}
       else{
-        const landing=chooseSeekerLanding(idx,type,reach);
+        const landing=chooseSeekerLanding(idx,type,reach,layers,roll);
         const path=onePathFromLayers(layers,landing,roll);
         const win=applySeekerMove(idx,landing,path,roll);
         line=`出目${roll}で移動`+(G.lastCross.length?`／✦交差${G.lastCross.length}`:'');
