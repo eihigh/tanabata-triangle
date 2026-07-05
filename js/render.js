@@ -29,18 +29,11 @@ export function drawBoard(canvas, state, opts = {}) {
   ctx.fillRect(0, 0, W, W);
 
   const s = state[who];
-  const other = who === 'orihime' ? 'hikoboshi' : 'orihime';
   const hintSet = hints(state);
 
-  // 軌跡（自分）
+  // 軌跡（この盤面のシーカーのみ）
   ctx.fillStyle = COLORS[who].trail;
   for (const k of s.trail) fillCell(ctx, parseKey(k), cell);
-
-  // 王様ビューでは相手の軌跡も薄く重ねる
-  if (reveal) {
-    ctx.fillStyle = COLORS[other].trail;
-    for (const k of state[other].trail) fillCell(ctx, parseKey(k), cell);
-  }
 
   // グリッド線
   ctx.strokeStyle = COLORS.grid;
@@ -56,11 +49,8 @@ export function drawBoard(canvas, state, opts = {}) {
     ctx.stroke();
   }
 
-  // デブリ（自分の盤）
+  // デブリ（この盤面のもののみ。盤面ごとに独立）
   for (const k of s.debris) drawDebris(ctx, parseKey(k), cell);
-  if (reveal) {
-    for (const k of state[other].debris) drawDebris(ctx, parseKey(k), cell);
-  }
 
   // 交差ヒント（★）— シーカービューでは常に、王様ビューでも表示
   ctx.fillStyle = COLORS.hint;
@@ -87,11 +77,13 @@ export function drawBoard(canvas, state, opts = {}) {
     }
   }
 
-  // 駒
+  // 駒。自分の駒は不透明、王様ビューでの相手駒は「ゴースト」表示で区別する。
   const oriPos = who === 'orihime' && pieceOverride ? pieceOverride : state.orihime.pos;
   const hikPos = who === 'hikoboshi' && pieceOverride ? pieceOverride : state.hikoboshi.pos;
-  if (who === 'orihime' || reveal) drawPiece(ctx, oriPos, cell, 'orihime');
-  if (who === 'hikoboshi' || reveal) drawPiece(ctx, hikPos, cell, 'hikoboshi');
+  if (who === 'orihime') drawPiece(ctx, oriPos, cell, 'orihime');
+  else if (reveal) drawPiece(ctx, oriPos, cell, 'orihime', true);
+  if (who === 'hikoboshi') drawPiece(ctx, hikPos, cell, 'hikoboshi');
+  else if (reveal) drawPiece(ctx, hikPos, cell, 'hikoboshi', true);
 }
 
 function fillCell(ctx, c, cell) {
@@ -134,22 +126,38 @@ function drawStar(ctx, c, cell) {
   ctx.fill();
 }
 
-function drawPiece(ctx, pos, cell, who) {
+// ghost=true のとき、その盤面には本来存在しない相手駒を半透明＋破線リングで描く
+// （王様が二人の位置関係を掴むための補助表示）。
+function drawPiece(ctx, pos, cell, who, ghost = false) {
   const cx = center(pos.x, cell);
   const cy = center(pos.y, cell);
   const r = cell * 0.34;
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.fillStyle = COLORS[who].piece;
-  ctx.fill();
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-  ctx.stroke();
-  ctx.fillStyle = '#fff';
-  ctx.font = `${Math.floor(cell * 0.32)}px sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(COLORS[who].label[0], cx, cy + 1);
+  ctx.save();
+  if (ghost) {
+    ctx.globalAlpha = 0.4;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = COLORS[who].piece;
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.setLineDash([4, 3]);
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.stroke();
+  } else {
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = COLORS[who].piece;
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    ctx.stroke();
+    ctx.fillStyle = '#fff';
+    ctx.font = `${Math.floor(cell * 0.32)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(COLORS[who].label[0], cx, cy + 1);
+  }
+  ctx.restore();
 }
 
 export { COLORS };
