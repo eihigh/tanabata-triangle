@@ -311,7 +311,7 @@ function bindDirPad(who) {
       const from = path[path.length - 1];
       const to = legalStep(state, who, from, dir);
       if (!to) return;
-      if (path.length - 1 >= state.stepsPerMove) return; // 3手まで
+      if (path.length - 1 >= state[who].steps) return; // このシーカーの移動量まで
       path.push(to);
       renderSeeker(who);
       refreshMoveControls(who);
@@ -325,7 +325,7 @@ function bindDirPad(who) {
     }
   };
   ui.btnConfirm.onclick = () => {
-    if (path.length - 1 !== state.stepsPerMove) return;
+    if (path.length - 1 !== state[who].steps) return;
     const steps = path.slice(1); // 現在位置を除いた着地マス列
     applyMove(state, who, steps);
     if (state.winner) return showResult();
@@ -334,17 +334,18 @@ function bindDirPad(who) {
 }
 
 function refreshMoveControls(who) {
+  const need = state[who].steps;
   const used = path.length - 1;
   const from = path[path.length - 1];
   // 方向ボタンの有効/無効
   for (const [name, dir] of Object.entries(DIRS)) {
-    const legal = used < state.stepsPerMove && legalStep(state, who, from, dir) !== null;
+    const legal = used < need && legalStep(state, who, from, dir) !== null;
     el(`dir-${name}`).disabled = !legal;
   }
   ui.btnUndo.disabled = path.length <= 1;
-  ui.btnConfirm.disabled = used !== state.stepsPerMove;
-  ui.status.textContent = `移動: ${used} / ${state.stepsPerMove} マス` +
-    (used === state.stepsPerMove ? '（確定できます）' : '（ちょうど3マス動く）');
+  ui.btnConfirm.disabled = used !== need;
+  ui.status.textContent = `移動: ${used} / ${need} マス` +
+    (used === need ? '（確定できます）' : `（ちょうど${need}マス動く）`);
 }
 
 // ---- 勝敗 ------------------------------------------------------------------

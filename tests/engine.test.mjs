@@ -172,5 +172,29 @@ function throws(fn, msg) {
   );
 }
 
+// --- バリアントA: 織姫だけ移動量2 ------------------------------------------
+{
+  const g = createGame({ STEPS: { orihime: 2 } });
+  ok(g.orihime.steps === 2 && g.hikoboshi.steps === 3, 'per-seeker step counts');
+  placeDebris(g, 'orihime', { x: 8, y: 0 });
+  throws(() => applyMove(g, 'orihime', ['down', 'down', 'down']), 'orihime rejects 3-step move');
+  applyMove(g, 'orihime', ['down', 'down']); // (0,0)->(0,2)
+  ok(key(g.orihime.pos) === '0,2', 'orihime moves exactly 2');
+  ok(g.phase === PHASE.KING_DEBRIS_HIKOBOSHI, 'advances after 2-step move');
+  placeDebris(g, 'hikoboshi', { x: 0, y: 0 });
+  throws(() => applyMove(g, 'hikoboshi', ['up', 'up']), 'hikoboshi still needs 3 steps');
+  applyMove(g, 'hikoboshi', ['up', 'up', 'up']); // (8,8)->(8,5)
+  ok(key(g.hikoboshi.pos) === '8,5', 'hikoboshi moves exactly 3');
+}
+
+// --- バリアントB: 盤サイズ7x7 ----------------------------------------------
+{
+  const g = createGame({ BOARD_SIZE: 7 });
+  ok(g.size === 7, 'board size 7');
+  ok(g.orihime.trail.has('0,0') && g.hikoboshi.trail.has('6,6'), 'start corners follow board size');
+  ok(g.orihime.debris.has('3,3') && g.hikoboshi.debris.has('3,3'), 'center debris at (3,3) on 7x7');
+  ok(!canPlaceDebris(g, 'orihime', { x: 7, y: 0 }), 'off-board on 7x7 rejected');
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

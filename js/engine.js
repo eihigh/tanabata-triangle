@@ -6,10 +6,11 @@
 // ---- 調整可能な定数（プロトタイプの既定値）----------------------------------
 export const DEFAULTS = {
   BOARD_SIZE: 9, // 9x9（座標 0..8）
-  STEPS_PER_MOVE: 3, // 1手でちょうど3マス
+  STEPS_PER_MOVE: 3, // 1手でちょうど何マス動くか（両シーカー共通の既定）
   MAX_ROUNDS: 7, // 各シーカーが7回移動
   DEBRIS_PER_TURN: 1, // 移動前に王様が置くデブリ数
-  START: { orihime: { x: 0, y: 0 }, hikoboshi: { x: 8, y: 8 } },
+  // START / STEPS を省略すると、開始位置は盤の対角コーナー、移動量は STEPS_PER_MOVE。
+  // STEPS: { orihime, hikoboshi } で片方だけ移動量を変えるバリアントも作れる。
   INITIAL_CENTER_DEBRIS: true, // 初期状態で両盤の中央にデブリを1個置く
 };
 
@@ -41,21 +42,31 @@ const inBounds = (c, size) => c.x >= 0 && c.y >= 0 && c.x < size && c.y < size;
 // ---- 初期化 -----------------------------------------------------------------
 export function createGame(config = {}) {
   const cfg = { ...DEFAULTS, ...config };
+  const size = cfg.BOARD_SIZE;
+  // 開始位置: 指定が無ければ盤の対角コーナー（盤サイズに追従）
+  const start = config.START || {
+    orihime: { x: 0, y: 0 },
+    hikoboshi: { x: size - 1, y: size - 1 },
+  };
+  // 移動量: 指定が無ければ両者 STEPS_PER_MOVE。片方だけ変えるバリアントに対応。
+  const stepsCfg = config.STEPS || {};
+  const stepFor = (who) => stepsCfg[who] ?? cfg.STEPS_PER_MOVE;
   // 初期中央デブリ（開始マス上には置けないので、開始マスと重ならない盤にのみ置く）
-  const center = { x: Math.floor(cfg.BOARD_SIZE / 2), y: Math.floor(cfg.BOARD_SIZE / 2) };
-  const mkSeeker = (start) => {
+  const center = { x: Math.floor(size / 2), y: Math.floor(size / 2) };
+  const mkSeeker = (pos, steps) => {
     const debris = new Set();
-    if (cfg.INITIAL_CENTER_DEBRIS && !eq(start, center)) debris.add(key(center));
+    if (cfg.INITIAL_CENTER_DEBRIS && !eq(pos, center)) debris.add(key(center));
     return {
-      pos: { ...start },
-      trail: new Set([key(start)]), // 開始マスも軌跡に含む
+      pos: { ...pos },
+      steps, // このシーカーが1手で動くマス数
+      trail: new Set([key(pos)]), // 開始マスも軌跡に含む
       debris,
       revealedHints: new Set(), // 手番開始時に凍結される交差ヒント
     };
   };
   return {
-    size: cfg.BOARD_SIZE,
-    stepsPerMove: cfg.STEPS_PER_MOVE,
+    size,
+    stepsPerMove: cfg.STEPS_PER_MOVE, // 既定移動量（表示・参照用）
     maxRounds: cfg.MAX_ROUNDS,
     debrisPerTurn: cfg.DEBRIS_PER_TURN,
     round: 1,
@@ -63,8 +74,8 @@ export function createGame(config = {}) {
     phase: PHASE.KING_DEBRIS_ORIHIME,
     winner: null, // null | 'seekers' | 'king'
     meetingCell: null, // 出会えたマス（シーカー勝ち時）
-    orihime: mkSeeker(cfg.START.orihime),
-    hikoboshi: mkSeeker(cfg.START.hikoboshi),
+    orihime: mkSeeker(start.orihime, stepFor('orihime')),
+    hikoboshi: mkSeeker(start.hikoboshi, stepFor('hikoboshi')),
   };
 }
 
@@ -141,7 +152,7 @@ export function hasAnyLegalMove(state, who) {
     }
     return false;
   };
-  return dfs(state[who].pos, state.stepsPerMove);
+  return dfs(state[who].pos, state[who].steps);
 }
 
 // ちょうど stepsPerMove マスの合法な経路を全列挙する（重複端点含む）。
@@ -166,7 +177,7 @@ export function enumerateMoves(state, who, opts = {}) {
       acc.pop();
     }
   };
-  dfs(state[who].pos, state.stepsPerMove);
+  dfs(state[who].pos, state[who].steps);
   return results;
 }
 
@@ -227,7 +238,7 @@ export function reachableEndSet(state, who, opts = {}) {
   }
   const start = state[who].pos.y * N + state[who].pos.x;
   const set = new Set();
-  for (const idx of reachEndsGrid(N, state.stepsPerMove, start, g)) {
+  for (const idx of reachEndsGrid(N, state[who].steps, start, g)) {
     set.add(`${idx % N},${(idx - (idx % N)) / N}`);
   }
   return set;
@@ -239,8 +250,8 @@ export function applyMove(state, who, path) {
   if (state.phase !== movePhaseFor(who)) {
     throw new Error(`applyMove: wrong phase ${state.phase} for ${who}`);
   }
-  if (!Array.isArray(path) || path.length !== state.stepsPerMove) {
-    throw new Error(`applyMove: path must have length ${state.stepsPerMove}`);
+  if (!Array.isArray(path) || path.length !== state[who].steps) {
+    throw new Error(`applyMove: path must have length ${state[who].steps}`);
   }
   const s = state[who];
   let cur = s.pos;

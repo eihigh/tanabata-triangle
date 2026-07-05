@@ -154,7 +154,7 @@ export function chooseKingDebris(state, who, rng = Math.random, params = KING) {
   const size = state.size;
   const focal = kingFocal(state);
   const seeker = state[who];
-  const steps = state.stepsPerMove;
+  const steps = seeker.steps; // このシーカーの移動量
   const startIdx = seeker.pos.y * size + seeker.pos.x;
 
   // 到達端点(index配列)から焦点への最短距離を返す高速版

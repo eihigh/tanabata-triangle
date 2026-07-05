@@ -113,5 +113,22 @@ function ok(cond, msg) {
   ok(g.winner === 'seekers' || g.winner === 'king', 'a winner is decided');
 }
 
+// --- 通し: バリアント（7x7・織姫移動2）でも全AIで決着する ------------------
+{
+  const g = createGame({ BOARD_SIZE: 7, STEPS: { orihime: 2 }, MAX_ROUNDS: 7 });
+  const rng = mulberry32(55);
+  let guard = 0;
+  while (g.phase !== PHASE.GAME_OVER && guard++ < 100) {
+    const who = g.phase.includes('ORIHIME') ? 'orihime' : 'hikoboshi';
+    if (g.phase.startsWith('KING_DEBRIS')) placeDebris(g, who, chooseKingDebris(g, who, rng));
+    else {
+      const m = chooseSeekerMove(g, who, rng);
+      ok(m.path.length === g[who].steps, `${who} AI path matches its step count`);
+      applyMove(g, who, m.path);
+    }
+  }
+  ok(g.phase === PHASE.GAME_OVER, 'variant all-AI game reaches game over');
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
