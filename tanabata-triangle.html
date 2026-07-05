@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>七夕トライアングル</title>
+<style>
+  :root {
+    --night0: #070b1e;
+    --night1: #0d1440;
+    --night2: #16205c;
+    --gold: #f5d76e;
+    --sakura: #f8b3c5;
+    --orihime: #7de8d8;
+    --hikoboshi: #ffb164;
+    --text: #e8ecff;
+    --dim: #9aa3cc;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", "Noto Sans JP", sans-serif;
+    background: linear-gradient(160deg, var(--night0) 0%, var(--night1) 55%, var(--night2) 100%);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    overflow-x: hidden;
+  }
+  /* 星空と天の川 */
+  #stars { position: fixed; inset: 0; pointer-events: none; z-index: 0; }
+  .star { position: absolute; border-radius: 50%; background: #fff; opacity: .7; animation: tw 3s infinite alternate; }
+  @keyframes tw { from { opacity: .25; } to { opacity: .9; } }
+  #milkyway {
+    position: fixed; pointer-events: none; z-index: 0;
+    width: 220vmax; height: 26vmax;
+    left: 50%; top: 40%;
+    transform: translate(-50%, -50%) rotate(-28deg);
+    background: linear-gradient(90deg, transparent,
+      rgba(180,200,255,0.025) 20%, rgba(220,230,255,0.06) 50%,
+      rgba(180,200,255,0.025) 80%, transparent);
+    filter: blur(6px);
+  }
+
+  #app { position: relative; z-index: 1; width: min(560px, 94vw); padding: 18px 0 32px; }
+  .screen { display: none; }
+  .screen.active { display: block; animation: fadein .35s ease; }
+  @keyframes fadein { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+  h1 {
+    font-size: 1.9rem; text-align: center; letter-spacing: .35em; text-indent: .35em;
+    color: var(--gold); font-weight: 600; margin-bottom: .3em;
+    text-shadow: 0 0 18px rgba(245,215,110,.45);
+  }
+  .subtitle { text-align: center; color: var(--dim); font-size: .85rem; margin-bottom: 1.6em; }
+
+  .panel {
+    background: rgba(10, 16, 48, .88);
+    border: 1px solid rgba(160,180,255,.18);
+    border-radius: 14px;
+    padding: 18px 20px;
+    margin-bottom: 14px;
+    backdrop-filter: blur(3px);
+  }
+  .panel h2 { font-size: .95rem; color: var(--gold); margin-bottom: .6em; letter-spacing: .1em; }
+  .panel p, .panel li { font-size: .84rem; line-height: 1.75; color: var(--text); }
+  .panel ul { padding-left: 1.3em; }
+  .note { color: var(--dim); font-size: .78rem; }
+
+  button {
+    font-family: inherit; cursor: pointer; border: none; border-radius: 10px;
+    padding: 13px 22px; font-size: 1rem; font-weight: 600;
+    color: #1a1a2e; background: linear-gradient(135deg, var(--gold), #e8b84a);
+    box-shadow: 0 2px 14px rgba(245,215,110,.35);
+    transition: transform .12s, box-shadow .12s;
+    display: block; width: 100%;
+  }
+  button:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 4px 20px rgba(245,215,110,.5); }
+  button:disabled { opacity: .35; cursor: default; box-shadow: none; }
+  button.ghost {
+    background: transparent; color: var(--text);
+    border: 1px solid rgba(160,180,255,.35); box-shadow: none;
+  }
+
+  .toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .toggle-row label { font-size: .9rem; }
+  .switch { position: relative; width: 52px; height: 28px; flex-shrink: 0; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .slider {
+    position: absolute; inset: 0; border-radius: 28px; cursor: pointer;
+    background: rgba(120,130,180,.35); transition: .2s;
+  }
+  .slider::before {
+    content: ""; position: absolute; width: 22px; height: 22px; border-radius: 50%;
+    left: 3px; top: 3px; background: #fff; transition: .2s;
+  }
+  .switch input:checked + .slider { background: var(--gold); }
+  .switch input:checked + .slider::before { transform: translateX(24px); }
+
+  /* 手渡し画面 */
+  .handoff-center { text-align: center; padding: 40px 0 26px; }
+  .handoff-day { color: var(--dim); letter-spacing: .2em; margin-bottom: 14px; }
+  .handoff-name { font-size: 1.7rem; font-weight: 700; margin-bottom: 6px; }
+  .handoff-name.orihime { color: var(--orihime); text-shadow: 0 0 16px rgba(125,232,216,.5); }
+  .handoff-name.hikoboshi { color: var(--hikoboshi); text-shadow: 0 0 16px rgba(255,177,100,.5); }
+  .handoff-sub { color: var(--dim); font-size: .85rem; margin-bottom: 30px; }
+
+  /* 手番画面 */
+  .turn-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; padding: 0 2px; }
+  .turn-day { font-size: .9rem; color: var(--gold); letter-spacing: .15em; }
+  .turn-player { font-size: 1.05rem; font-weight: 700; }
+  .turn-player.orihime { color: var(--orihime); }
+  .turn-player.hikoboshi { color: var(--hikoboshi); }
+
+  .news {
+    border-left: 3px solid var(--sakura);
+    background: rgba(248,179,197,.08);
+    border-radius: 0 10px 10px 0;
+    padding: 10px 14px; margin-bottom: 12px;
+    font-size: .84rem; line-height: 1.7;
+  }
+  .news b.roll { color: var(--gold); font-size: 1.05em; }
+  .news .crossmark { color: var(--sakura); }
+
+  #board {
+    display: grid; gap: 4px;
+    grid-template-columns: repeat(7, 1fr);
+    margin: 0 auto 14px;
+    width: 100%; aspect-ratio: 1;
+    padding: 10px;
+    background: rgba(6, 10, 34, .8);
+    border: 1px solid rgba(160,180,255,.22);
+    border-radius: 14px;
+  }
+  .cell {
+    position: relative; border-radius: 7px;
+    background: rgba(120, 140, 220, .08);
+    border: 1px solid rgba(140,160,230,.10);
+    display: flex; align-items: center; justify-content: center;
+    font-size: clamp(11px, 3.4vw, 19px);
+    transition: background .15s, box-shadow .15s;
+    user-select: none;
+  }
+  .cell.trail { background: rgba(140,160,230,.16); }
+  .cell.lastpath { background: rgba(160,185,255,.26); }
+  .cell.cross::after {
+    content: "✦"; color: var(--sakura); position: absolute;
+    text-shadow: 0 0 8px rgba(248,179,197,.8);
+  }
+  .cell.newcross::after { animation: pop .6s ease; }
+  @keyframes pop { 0% { transform: scale(0); } 60% { transform: scale(1.6); } 100% { transform: scale(1); } }
+  .cell.me::before {
+    content: ""; position: absolute; inset: 18%; border-radius: 50%;
+  }
+  .cell.me.orihime::before { background: radial-gradient(circle, #d8fff7 15%, var(--orihime) 60%, transparent 75%); box-shadow: 0 0 14px var(--orihime); }
+  .cell.me.hikoboshi::before { background: radial-gradient(circle, #ffe9d2 15%, var(--hikoboshi) 60%, transparent 75%); box-shadow: 0 0 14px var(--hikoboshi); }
+  .cell.reach { cursor: pointer; background: rgba(245,215,110,.13); border-color: rgba(245,215,110,.45); }
+  .cell.reach:hover { background: rgba(245,215,110,.3); }
+  .cell.sel { background: rgba(245,215,110,.42); box-shadow: 0 0 12px rgba(245,215,110,.6); }
+  .cell.pathprev { box-shadow: inset 0 0 0 2px rgba(245,215,110,.55); }
+  .cell.partner::before {
+    content: ""; position: absolute; inset: 18%; border-radius: 50%;
+  }
+
+  .dice-row { display: flex; gap: 10px; justify-content: center; align-items: center; margin: 4px 0 12px; min-height: 58px; }
+  .die {
+    width: 48px; height: 48px; border-radius: 10px;
+    background: #f6f4ec; color: #1a1a2e;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.5rem; font-weight: 700;
+    box-shadow: 0 3px 10px rgba(0,0,0,.4);
+    animation: pop .35s ease;
+  }
+  .dice-sum { font-size: 1.1rem; color: var(--gold); font-weight: 700; }
+
+  .prompt { text-align: center; font-size: .88rem; margin-bottom: 12px; color: var(--text); min-height: 1.6em; }
+  .prompt .em { color: var(--gold); font-weight: 700; }
+
+  .result-center { text-align: center; padding: 30px 0; }
+  .result-title { font-size: 2rem; font-weight: 700; margin-bottom: 12px; letter-spacing: .15em; }
+  .result-title.win { color: var(--gold); text-shadow: 0 0 24px rgba(245,215,110,.6); }
+  .result-title.lose { color: var(--dim); }
+  .result-sub { color: var(--text); font-size: .95rem; line-height: 2; margin-bottom: 26px; }
+  .reunion { font-size: 3rem; margin-bottom: 16px; animation: pop .8s ease; }
+
+  .btn-stack { display: grid; gap: 10px; }
+</style>
+</head>
+<body>
+<div id="milkyway"></div>
+<div id="stars"></div>
+
+<div id="app">
+
+  <!-- ===== 設定画面 ===== -->
+  <div class="screen active" id="screen-setup">
+    <h1>七夕トライアングル</h1>
+    <p class="subtitle">— 天の川で、あなたを探す —</p>
+    <div class="panel">
+      <h2>あそびかた</h2>
+      <ul>
+        <li>織姫と彦星の2人協力。互いの位置は見えない。</li>
+        <li>サイコロの合計<b>ちょうど</b>の歩数で移動（上下左右・途中で止まれない）。</li>
+        <li>自分が動いた道が、相手の<b>直前の手番</b>の道と重なると、そのマスが ✦ で開示される（横切った自分だけが知る。相手には伝わらない）。</li>
+        <li><b>7日以内</b>に二人が<b>同じマス</b>に立てたら再会。会えなければ「また来年」。</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <div class="toggle-row">
+        <label for="opt-dice">使うサイコロ<br><span class="note">1d6（1で振り直し）＝標準・1なら何度でも振り直せる／ 2d4＝4面2個 ／ 1d6＝6面1個 ／ 2d6＝6面2個 ／ 1d6（1・2で振り直し）</span></label>
+        <select id="opt-dice">
+          <option value="1,6,1" selected>1d6（1で振り直し・標準）</option>
+          <option value="2,4">2d4</option>
+          <option value="1,6">1d6</option>
+          <option value="2,6">2d6</option>
+          <option value="1,6,2">1d6（1・2で振り直し）</option>
+        </select>
+      </div>
+      <div class="toggle-row">
+        <label for="opt-share">出目の相互開示<br><span class="note">手番終了時に自分の出目（合計値）を相手に伝える</span></label>
+        <span class="switch"><input type="checkbox" id="opt-share" checked><span class="slider" onclick="document.getElementById('opt-share').click()"></span></span>
+      </div>
+    </div>
+    <button id="btn-start">ゲームを始める</button>
+  </div>
+
+  <!-- ===== 手渡し画面 ===== -->
+  <div class="screen" id="screen-handoff">
+    <div class="handoff-center">
+      <div class="handoff-day" id="ho-day"></div>
+      <div class="handoff-name" id="ho-name"></div>
+      <div class="handoff-sub">端末をこのプレイヤーに渡してください。<br>ほかの人は画面を見ないでね。</div>
+      <button id="btn-open">盤面をひらく</button>
+    </div>
+  </div>
+
+  <!-- ===== 手番画面 ===== -->
+  <div class="screen" id="screen-turn">
+    <div class="turn-head">
+      <span class="turn-day" id="t-day"></span>
+      <span class="turn-player" id="t-player"></span>
+    </div>
+    <div id="t-news"></div>
+    <div id="board"></div>
+    <div class="dice-row" id="dice-row"></div>
+    <div class="prompt" id="t-prompt"></div>
+    <div class="btn-stack">
+      <button id="btn-roll">サイコロを振る</button>
+      <button id="btn-reroll" style="display:none">振り直す</button>
+      <button id="btn-confirm" style="display:none">このマスに移動する</button>
+      <button id="btn-end" style="display:none">手番を終える</button>
+    </div>
+  </div>
+
+  <!-- ===== 結果画面 ===== -->
+  <div class="screen" id="screen-result">
+    <div class="result-center">
+      <div class="reunion" id="r-emoji"></div>
+      <div class="result-title" id="r-title"></div>
+      <div class="result-sub" id="r-sub"></div>
+      <button id="btn-again">もういちど</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+'use strict';
+
+/* ===== 定数（引き継ぎ書 第2節） ===== */
+const N = 7;        // グリッド一辺
+const MAX_DAY = 7;  // 日数
+let NDICE = 2;      // サイコロ本数（設定画面で変更可）
+let FACES = 4;      // 面数（設定画面で変更可）
+let REROLL = 0;     // 振り直ししきい値（0=なし、k=出目がk以下なら振り直せる）
+const DECAY = 1;    // 交差判定：直近何手番の相手軌跡を有効とするか
+
+const PLAYERS = [
+  { key: 'orihime',   name: '織姫' },
+  { key: 'hikoboshi', name: '彦星' },
+];
+
+/* ===== 盤ユーティリティ ===== */
+const idx = (r, c) => r * N + c;
+const dist = (a, b) => Math.abs(((a / N) | 0) - ((b / N) | 0)) + Math.abs((a % N) - (b % N));
+function neighbors(a) {
+  const r = (a / N) | 0, c = a % N, out = [];
+  if (r > 0) out.push(a - N);
+  if (r < N - 1) out.push(a + N);
+  if (c > 0) out.push(a - 1);
+  if (c < N - 1) out.push(a + 1);
+  return out;
+}
+// ちょうどk歩で到達できるマス（障害物なしの4近傍グリッドでは距離＋偶奇で決まる）
+function reachableSet(start, k) {
+  const out = [];
+  for (let q = 0; q < N * N; q++) {
+    const d = dist(start, q);
+    if (d <= k && ((k - d) & 1) === 0) out.push(q);
+  }
+  return out;
+}
+// ちょうどk歩の経路を1本サンプリング（各歩、目的地に間に合う近傍から無作為）
+function onePath(start, target, k) {
+  const path = [start];
+  let cur = start, rem = k;
+  while (rem > 0) {
+    const cand = neighbors(cur).filter(nb => {
+      const d = dist(nb, target);
+      return d <= rem - 1 && (((rem - 1) - d) & 1) === 0;
+    });
+    cur = cand[(Math.random() * cand.length) | 0];
+    path.push(cur);
+    rem--;
+  }
+  return path;
+}
+function perimeterCells() {
+  const out = [];
+  for (let a = 0; a < N * N; a++) {
+    const r = (a / N) | 0, c = a % N;
+    if (r === 0 || c === 0 || r === N - 1 || c === N - 1) out.push(a);
+  }
+  return out;
+}
+
+/* ===== ゲーム状態 ===== */
+let G = null;
+
+function newGame(shareRolls) {
+  const per = perimeterCells();
+  const minDist = Math.max(4, Math.round(N * 1.1));
+  const a = per[(Math.random() * per.length) | 0];
+  let b;
+  do { b = per[(Math.random() * per.length) | 0]; } while (dist(a, b) < minDist);
+
+  G = {
+    shareRolls,
+    day: 1,
+    pi: 0,                 // 手番プレイヤー index
+    turn: 0,               // 手番の通し番号
+    positions: [a, b],
+    stamps: [newStamps(a, 0), newStamps(b, 0)],  // Map<cell, turn>
+    lastPath: [[a], [b]],
+    lastRoll: [null, null],
+    knownCross: [new Set(), new Set()],          // 表示用に永続保持
+    news: [null, null],    // 次の手番開始時に見せる前手番情報 {oppRoll, crossCells}
+    phase: 'handoff',      // handoff | roll | pick | done
+    roll: null,
+    reach: [],
+    sel: null,
+    selPath: null,
+    newCross: [],
+  };
+}
+function newStamps(startCell, turn) {
+  const m = new Map();
+  m.set(startCell, turn);
+  return m;
+}
+
+/* ===== 画面制御 ===== */
+const $ = (id) => document.getElementById(id);
+function show(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  $(id).classList.add('active');
+}
+
+$('btn-start').onclick = () => {
+  const [n, f, r] = $('opt-dice').value.split(',').map(Number);
+  NDICE = n; FACES = f; REROLL = r || 0;
+  newGame($('opt-share').checked);
+  showHandoff();
+};
+$('btn-again').onclick = () => show('screen-setup');
+
+function showHandoff() {
+  const p = PLAYERS[G.pi];
+  $('ho-day').textContent = `第 ${G.day} 日 ／ ${MAX_DAY} 日`;
+  $('ho-name').textContent = `${p.name} の番`;
+  $('ho-name').className = `handoff-name ${p.key}`;
+  show('screen-handoff');
+}
+
+$('btn-open').onclick = () => {
+  G.phase = 'roll';
+  G.roll = null; G.sel = null; G.selPath = null; G.newCross = [];
+  renderTurn();
+  show('screen-turn');
+};
+
+/* ===== 手番画面レンダリング ===== */
+function renderTurn() {
+  const p = PLAYERS[G.pi];
+  $('t-day').textContent = `第 ${G.day} 日 ／ ${MAX_DAY} 日`;
+  $('t-player').textContent = p.name;
+  $('t-player').className = `turn-player ${p.key}`;
+
+  // 前手番のお知らせ（交差＋出目開示）
+  const news = G.news[G.pi];
+  let html = '';
+  if (news) {
+    if (G.shareRolls && news.oppRoll != null) {
+      html += `<div class="news">相手は前の手番で <b class="roll">${news.oppRoll}</b> マスぶん動いたと伝えられた。</div>`;
+    }
+  }
+  $('t-news').innerHTML = html;
+
+  renderBoard();
+  renderDice();
+  renderButtons();
+}
+
+function renderBoard() {
+  const board = $('board');
+  board.innerHTML = '';
+  const me = G.pi, myPos = G.positions[me];
+  const myStamps = G.stamps[me];
+  const lastPathSet = new Set(G.lastPath[me]);
+  const reachSet = new Set(G.phase === 'pick' ? G.reach : []);
+  const prevSet = new Set(G.selPath || []);
+  const newCrossSet = new Set(G.newCross);
+
+  for (let cell = 0; cell < N * N; cell++) {
+    const div = document.createElement('div');
+    div.className = 'cell';
+    if (myStamps.has(cell)) div.classList.add('trail');
+    if (lastPathSet.has(cell)) div.classList.add('lastpath');
+    if (G.knownCross[me].has(cell)) div.classList.add('cross');
+    if (newCrossSet.has(cell)) div.classList.add('newcross');
+    if (prevSet.has(cell) && cell !== myPos) div.classList.add('pathprev');
+    if (cell === myPos) div.classList.add('me', PLAYERS[me].key);
+    if (reachSet.has(cell)) {
+      div.classList.add('reach');
+      if (cell === G.sel) div.classList.add('sel');
+      div.onclick = () => pickCell(cell);
+    }
+    board.appendChild(div);
+  }
+}
+
+function renderDice() {
+  const row = $('dice-row');
+  row.innerHTML = '';
+  if (G.dice) {
+    for (const d of G.dice) {
+      const el = document.createElement('div');
+      el.className = 'die';
+      el.textContent = d;
+      row.appendChild(el);
+    }
+    const sum = document.createElement('div');
+    sum.className = 'dice-sum';
+    sum.textContent = `= ${G.roll}`;
+    row.appendChild(sum);
+  }
+}
+
+function renderButtons() {
+  $('btn-roll').style.display = G.phase === 'roll' ? '' : 'none';
+  $('btn-reroll').style.display = (G.phase === 'pick' && REROLL > 0 && G.roll <= REROLL) ? '' : 'none';
+  $('btn-confirm').style.display = G.phase === 'pick' ? '' : 'none';
+  $('btn-confirm').disabled = G.sel == null;
+  $('btn-end').style.display = G.phase === 'done' ? '' : 'none';
+
+  const prompt = $('t-prompt');
+  if (G.phase === 'roll') prompt.innerHTML = 'サイコロを振って移動しよう。';
+  else if (G.phase === 'pick') {
+    prompt.innerHTML = `<span class="em">${G.roll}</span> 歩ちょうどで行けるマスを選んでください。`;
+    if (REROLL > 0 && G.roll <= REROLL) prompt.innerHTML += `<br><span class="note">出目が ${REROLL} 以下なので「振り直す」も選べます。</span>`;
+  }
+  else if (G.phase === 'done') {
+    let msg = G.newCross.length > 0
+      ? `<span class="em">✦ 交差を発見！</span> 相手の直前の道と ${G.newCross.length} マスで重なった。`
+      : 'この移動では相手の道と重ならなかった。';
+    if (G.shareRolls) msg += `<br><span class="note">手番を終えるとき、出目「${G.roll}」を相手に伝えます。</span>`;
+    prompt.innerHTML = msg;
+  }
+}
+
+/* ===== 手番の進行 ===== */
+function doRoll() {
+  G.dice = [];
+  let sum = 0;
+  for (let i = 0; i < NDICE; i++) {
+    const d = 1 + ((Math.random() * FACES) | 0);
+    G.dice.push(d); sum += d;
+  }
+  G.roll = sum;
+  G.sel = null;
+  G.selPath = null;
+  G.reach = reachableSet(G.positions[G.pi], sum);
+  if (G.reach.length === 0) {
+    // 7×7、2d4では起きないが保険
+    G.phase = 'done';
+    G.newCross = [];
+  } else {
+    G.phase = 'pick';
+  }
+  renderTurn();
+}
+$('btn-roll').onclick = doRoll;
+$('btn-reroll').onclick = doRoll;
+
+function pickCell(cell) {
+  G.sel = cell;
+  G.selPath = onePath(G.positions[G.pi], cell, G.roll);
+  renderTurn();
+}
+
+$('btn-confirm').onclick = () => {
+  const me = G.pi, op = 1 - G.pi;
+  G.turn++;
+  const path = G.selPath;
+  const segment = path.slice(1); // 移動で踏んだマス（出発マスは除く）
+
+  // 交差判定：相手の減衰内スタンプとの重なり
+  const opStamps = G.stamps[op];
+  const crosses = [...new Set(segment.filter(x => {
+    const t = opStamps.get(x);
+    return t !== undefined && (DECAY === 0 || G.turn - t <= DECAY);
+  }))];
+
+  // 自分の軌跡スタンプ・移動
+  for (const x of path) G.stamps[me].set(x, G.turn);
+  G.positions[me] = path[path.length - 1];
+  G.lastPath[me] = [...new Set(path)];
+  G.lastRoll[me] = G.roll;
+
+  // 交差は「今、自分が動いて相手の直前の道を横切った」本人だけが知る。
+  // 被さられた側（相手）には伝えない。
+  for (const c of crosses) G.knownCross[me].add(c);
+  G.newCross = crosses;
+
+  // 相手への申し送りは出目のみ（交差は相手に伝えない）
+  G.news[op] = { oppRoll: G.roll };
+
+  // 勝利判定（同マス限定）
+  if (G.positions[me] === G.positions[op]) {
+    showResult(true);
+    return;
+  }
+
+  G.phase = 'done';
+  G.sel = null;
+  renderTurn();
+};
+
+$('btn-end').onclick = () => {
+  G.selPath = null;
+  G.dice = null;
+  if (G.pi === 1) {
+    // 彦星の手番終了＝1日の終わり
+    if (G.day >= MAX_DAY) { showResult(false); return; }
+    G.day++;
+  }
+  G.pi = 1 - G.pi;
+  showHandoff();
+};
+
+function showResult(win) {
+  if (win) {
+    $('r-emoji').textContent = '🎋✨';
+    $('r-title').textContent = '再会';
+    $('r-title').className = 'result-title win';
+    $('r-sub').innerHTML = `第 ${G.day} 日、天の川のまんなかで<br>織姫と彦星はめぐり会えました。`;
+  } else {
+    $('r-emoji').textContent = '🌌';
+    $('r-title').textContent = 'また来年';
+    $('r-title').className = 'result-title lose';
+    $('r-sub').innerHTML = `七日が過ぎ、天の川は遠ざかっていきました。<br>ふたりの想いは、来年の空へ。`;
+  }
+  show('screen-result');
+}
+
+/* ===== 星空生成 ===== */
+(function makeStars() {
+  const wrap = $('stars');
+  for (let i = 0; i < 120; i++) {
+    const s = document.createElement('div');
+    s.className = 'star';
+    const size = Math.random() < .85 ? 1.5 : 2.5;
+    s.style.width = s.style.height = size + 'px';
+    s.style.left = Math.random() * 100 + '%';
+    s.style.top = Math.random() * 100 + '%';
+    s.style.animationDelay = (Math.random() * 3) + 's';
+    s.style.animationDuration = (2 + Math.random() * 3) + 's';
+    wrap.appendChild(s);
+  }
+})();
+</script>
+</body>
+</html>
