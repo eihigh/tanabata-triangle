@@ -1447,7 +1447,11 @@ function playGame(board, cfg, rng) {
     const first = !windowUsed[nextMover];
     windowUsed[nextMover] = true;
     if (budgetLeft[nextMover] <= 0) return;
-    const n = Math.min(first ? 2 : 1, budgetLeft[nextMover]);
+    // --jfront=N: 序盤偏重配置。各窓で最大 N 個まで置く（予算が尽きるまで）。
+    // 例: --jfront=7 → 初回窓で全7個を一気投下。--jfront=4 → 4個,3個,... で早期に集中。
+    // 無指定（既定）は「初回窓2個・以降1個」で6日目まで分散。
+    const perWindow = cfg.jfront > 0 ? cfg.jfront : (first ? 2 : 1);
+    const n = Math.min(perWindow, budgetLeft[nextMover]);
     for (let i = 0; i < n; i++) {
       const ctx = buildKingContext(nextMover);
       const { cell, target } = ojamaPlace(
@@ -1953,6 +1957,7 @@ function main() {
     else if (a.startsWith('--jinit=')) flags.jinit = +a.slice(8);
     else if (a === '--jpass') flags.jpass = true;
     else if (a.startsWith('--jbudget=')) flags.jbudget = +a.slice(10);
+    else if (a.startsWith('--jfront=')) flags.jfront = +a.slice(9);
     else if (a.startsWith('--sgate=')) flags.sgate = +a.slice(8);
     else if (a === '--trap') flags.trap = true;
     else if (a === '--tracetrap') flags.tracetrap = true;
@@ -1999,7 +2004,7 @@ function main() {
         eps: flags.eps || 0, jeps: flags.jeps || 0,
         ojama: flags.ojama || 'none', jvariant: flags.jvariant || 'shared', jcap: flags.jcap, jinit: flags.jinit || 0,
         sgate: flags.sgate, tracetrap: !!flags.tracetrap, jpass: !!flags.jpass,
-        jbudget: flags.jbudget || 0,
+        jbudget: flags.jbudget || 0, jfront: flags.jfront || 0,
         mob: flags.mob || 0, soft: flags.soft || 0, safe: flags.safe || 0,
         aware: flags.aware || null, sharedCross: !!flags.sharedCross,
         precross: !!flags.precross,
