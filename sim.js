@@ -80,6 +80,17 @@
  *              省略時 0）。N=0〜3 の難易度レバー。外周は詰み防止で禁止。
  *   --sgate  : split2 の距離ゲート。mover から相手軌跡までの距離がこれ以下のときだけ
  *              軌跡の入口を塞ぐ（省略時 3）。実験19の感度分析用。
+ *   --trap   : 閉じ込め診断を表示（実験20）。自盤の空きマス連結成分の最小サイズ、
+ *              成分≤8を経験した試合率、負けの相互分断率、負けあたり詰み回数。
+ *   --tracetrap : 最初の「相互分断負け」の最終盤面をASCIIでダンプ（目視確認用）
+ *   --mob=W  : シーカーの可動性項（実験20）。自盤のデブリ密度が高い着地にペナルティ
+ *              W×Σmax(0,3-d)。人間の「囲われる前に壁から離れる」の greedy への移植。
+ *   --soft=D : シーカーの揺らぎ（実験20）。最善からスコア差 D 以内の着地から一様に
+ *              選ぶ混合戦略。sever の最善応答予測を外す読まれにくさのモデル。
+ *   --safe[=N] : シーカーの袋小路回避則（実験20）。自盤の関節点解析で「デブリあと1個で
+ *              密封されうるサイズ≤N の小部屋」への着地にペナルティ（省略時 N=8）。
+ *              人間の「囲われかけの部屋に入らない」の greedy への移植。出会い率は
+ *              変えないが、詰み凍結・相互分断の "事故死" をほぼ根絶する。
  *   --matrix : 第5節の実験マトリクス＋ε感度＋focal＋おじゃまを一括実行
  *
  * 例: node sim.js 10000 2d6 7 7 1 --policy=greedy --share
@@ -275,6 +286,14 @@ function samplePathBlocked(board, layers, target, k, rng) {
     rev.push(cur);
   }
   return rev.reverse();
+}
+
+// from を含む空きマス連結成分のサイズ（閉じ込め診断用）。blocked は通行不可マス。
+function compSize(board, from, blocked) {
+  const d = bfsDist(board, from, blocked);
+  let n = 0;
+  for (let q = 0; q < board.size; q++) if (d[q] >= 0) n++;
+  return n;
 }
 
 // デブリを避けたBFS距離場（おじゃまAI用）
@@ -1029,6 +1048,61 @@ function expectedDistBlocked(board, belief, L, blocked) {
   return e;
 }
 
+// --safe（実験20）: 「デブリあと1個で密封されうる小部屋」に立たない人間の回避則。
+// 自盤の空きマスグラフを現在地を根に DFS し（Tarjan の関節点）、関節マス（または根＝
+// 立ち去った後の現在地）をキングが1個塞ぐと本体から切り離される部分木のうち
+// サイズ ≤ th のマス全部を「危険」とマークする。危険マスへの着地はペナルティ
+// （ハード禁止ではないので、相手を掴める着地なら踏み込む余地は残る）。
+function unsafePockets(board, myPos, blocked, th) {
+  const size = board.size;
+  const unsafe = new Uint8Array(size);
+  const disc = new Int16Array(size).fill(-1);
+  const low = new Int16Array(size);
+  const sub = new Int16Array(size).fill(1);
+  const parent = new Int16Array(size).fill(-1);
+  const children = new Array(size).fill(null);
+  const it = new Int8Array(size);
+  let timer = 0;
+  const stack = [myPos];
+  disc[myPos] = low[myPos] = timer++;
+  while (stack.length) {
+    const u = stack[stack.length - 1];
+    const nb = board.nbrs[u];
+    if (it[u] < nb.length) {
+      const v = nb[it[u]++];
+      if (blocked[v] || v === parent[u]) continue;
+      if (disc[v] < 0) {
+        parent[v] = u;
+        (children[u] || (children[u] = [])).push(v);
+        disc[v] = low[v] = timer++;
+        stack.push(v);
+      } else if (disc[v] < low[u]) low[u] = disc[v];
+    } else {
+      stack.pop();
+      const p = parent[u];
+      if (p >= 0) {
+        if (low[u] < low[p]) low[p] = low[u];
+        sub[p] += sub[u];
+      }
+    }
+  }
+  for (let u = 0; u < size; u++) {
+    if (!children[u]) continue;
+    for (const v of children[u]) {
+      if (sub[v] <= th && (u === myPos || low[v] >= disc[u])) {
+        const st = [v];
+        while (st.length) {
+          const x = st.pop();
+          if (unsafe[x]) continue;
+          unsafe[x] = 1;
+          if (children[x]) for (const w of children[x]) st.push(w);
+        }
+      }
+    }
+  }
+  return unsafe;
+}
+
 // belief を半径2でならした「交差期待フィールド」
 function smoothField(board, belief) {
   const sm = new Float64Array(board.size);
@@ -1056,6 +1130,12 @@ function smoothField(board, belief) {
 function chooseMove(board, me, roll, day, maxDay, mode, rng, eps, reach, sampler, myBlocks, awareInfo, cfg) {
   // ε-ランダム：人間の不完全さのモデル。確率 eps で無情報に動く
   if (eps > 0 && mode !== 'random' && rng() < eps) mode = 'random';
+
+  // --safe: 密封されうる小部屋（あとデブリ1個で切り離される部分木）を避ける人間の回避則
+  const safeTh = (cfg && cfg.safe) || 0;
+  const unsafeArr = (safeTh > 0 && myBlocks && mode !== 'random')
+    ? unsafePockets(board, me.pos, myBlocks, safeTh) : null;
+  const SAFE_PEN = 25;
 
   if (mode === 'hybrid') {
     // 序盤（約4割）は情報収集、以降は会いにいく
@@ -1117,14 +1197,56 @@ function chooseMove(board, me, roll, day, maxDay, mode, rng, eps, reach, sampler
     //   自陣の壁を「避ける」計画は壁の向こうの相方から遠ざかる誤最適化になる。
     if (awareInfo && awareInfo.mode === 'dist') {
       for (const L of reach) {
-        const score = WIN_WEIGHT * belief[L] - expectedDistBlocked(board, belief, L, awareInfo.blocks) + rng() * 1e-6;
+        const score = WIN_WEIGHT * belief[L] - expectedDistBlocked(board, belief, L, awareInfo.blocks)
+          - (unsafeArr && unsafeArr[L] ? SAFE_PEN : 0) + rng() * 1e-6;
         if (score > bestScore) { bestScore = score; best = L; }
+      }
+      return { landing: best, path: sampler(best) };
+    }
+    // ---- 実験20: sever（belief操舵キング）へのシーカー側対抗オプション ----
+    // --mob=W（可動性・人間の「壁の近くに寄らない」）: 自盤のデブリ密度が高い着地に
+    //   ペナルティ。press(L)=Σ_デブリq max(0, 3-d(L,q))。閉じ込められる前に囲いを避ける。
+    // --soft=D（揺らぎ・読まれにくさ）: 最善からスコア差 D 以内の着地から一様に選ぶ。
+    //   キングの「mover の最善応答予測」を意図的に外す混合戦略。
+    const mobW = (cfg && cfg.mob) || 0;
+    const softD = (cfg && cfg.soft) || 0;
+    if (mobW > 0 || softD > 0) {
+      const blockedCells = [];
+      if (mobW > 0 && myBlocks) {
+        for (let q = 0; q < board.size; q++) if (myBlocks[q]) blockedCells.push(q);
+      }
+      const scored = [];
+      for (const L of reach) {
+        let s = WIN_WEIGHT * belief[L] - expectedDist(board, belief, L)
+          - (unsafeArr && unsafeArr[L] ? SAFE_PEN : 0);
+        if (mobW > 0) {
+          let press = 0;
+          for (const q of blockedCells) {
+            const d = board.d(L, q);
+            if (d < 3) press += 3 - d;
+          }
+          s -= mobW * press;
+        }
+        scored.push([L, s]);
+        if (s > bestScore) bestScore = s;
+      }
+      if (softD > 0) {
+        const pool = scored.filter(([, s]) => s >= bestScore - softD);
+        best = pool[(rng() * pool.length) | 0][0];
+      } else {
+        best = null;
+        let bs2 = -Infinity;
+        for (const [L, s] of scored) {
+          const j = s + rng() * 1e-6;
+          if (j > bs2) { bs2 = j; best = L; }
+        }
       }
       return { landing: best, path: sampler(best) };
     }
     // 採用構成: 素朴greedy（到達集合だけデブリを尊重し、狙いはマンハッタン距離）
     for (const L of reach) {
-      const score = WIN_WEIGHT * belief[L] - expectedDist(board, belief, L) + rng() * 1e-6;
+      const score = WIN_WEIGHT * belief[L] - expectedDist(board, belief, L)
+        - (unsafeArr && unsafeArr[L] ? SAFE_PEN : 0) + rng() * 1e-6;
       if (score > bestScore) { bestScore = score; best = L; }
     }
     return { landing: best, path: sampler(best) };
@@ -1140,7 +1262,8 @@ function chooseMove(board, me, roll, day, maxDay, mode, rng, eps, reach, sampler
     for (const x of path) {
       if (!seen.has(x)) { seen.add(x); info += sm[x]; }
     }
-    const score = WIN_WEIGHT * belief[L] + info - 0.01 * expectedDist(board, belief, L) + rng() * 1e-6;
+    const score = WIN_WEIGHT * belief[L] + info - 0.01 * expectedDist(board, belief, L)
+      - (unsafeArr && unsafeArr[L] ? SAFE_PEN : 0) + rng() * 1e-6;
     if (score > bestScore) { bestScore = score; best = L; bestPath = path; }
   }
   return { landing: best, path: bestPath };
@@ -1171,6 +1294,7 @@ function playGame(board, cfg, rng) {
     belief: policy !== 'random' ? makeBelief(board, pos, minDist) : null,
     focalTarget: center,                     // xfocal: 共有集合点（交差で更新）。focalx: 中心固定
     moves: 0, centerHits: 0,                 // adapt キング用の挙動観測（中心最寄り着地の回数）
+    prevPos1: pos, prevPos2: null,           // 回遊診断用（2手番前の位置）
   });
   const players = [mkPlayer(a), mkPlayer(b)];
   players[0].stamp[a] = 0;
@@ -1272,6 +1396,12 @@ function playGame(board, cfg, rng) {
   }
 
   let turn = 0, crossCellsTotal = 0, anyCross = false, stuck = 0, hintShown = false;
+  // 閉じ込め診断（実験20）: 各シーカーが自盤で属する空きマス連結成分の最小サイズと、
+  // 小部屋（成分サイズ≤8）に居た手番数。デブリ盤があるときだけ意味を持つ。
+  // oneSplitTurns=自盤の壁で相手の現在マスに到達できない（＝自分からは会いに行けない）手番数。
+  // hoverTurns=2手番前とほぼ同じ場所に戻った（壁の前の回遊＝実質動けない）手番数（3日目以降）。
+  const minComp = [size, size];
+  let trapTurns = 0, oneSplitTurns = 0, hoverTurns = 0;
 
   const rollDice = () => {
     let s = 0;
@@ -1340,6 +1470,18 @@ function playGame(board, cfg, rng) {
       // 詰み: ちょうどの歩数で止まれるマスがない → その場に留まる
       if (reach.length === 0) {
         stuck++;
+        // 閉じ込め診断: 詰み手番でも成分サイズを記録する（完全密封 comp=1 を見逃さない）
+        if (jOn && debrisCount > 0) {
+          const occ = myBlocks[op.pos];
+          if (occ) myBlocks[op.pos] = 0;
+          const dMe = bfsDist(board, me.pos, myBlocks);
+          if (occ) myBlocks[op.pos] = 1;
+          let c = 0;
+          for (let q = 0; q < size; q++) if (dMe[q] >= 0) c++;
+          if (c < minComp[pi]) minComp[pi] = c;
+          if (c <= 8) trapTurns++;
+          if (dMe[op.pos] < 0) oneSplitTurns++;
+        }
         me.stamp[me.pos] = turn;
         me.lastPathCells = [me.pos];
         me.lastRoll = roll;
@@ -1398,6 +1540,24 @@ function playGame(board, cfg, rng) {
       me.lastRoll = roll;
       me.moved = true;
 
+      // 閉じ込め診断: 着地後の自盤の連結成分サイズ・片側分断・回遊。
+      // 相手が「自盤のデブリの上」に立っている一時的な状態を分断と誤認しないよう、
+      // 相手の立ちマスは空きとみなして到達可能性を測る（構造的な壁だけを数える）。
+      if (jOn && debrisCount > 0) {
+        const occ = myBlocks[op.pos];
+        if (occ) myBlocks[op.pos] = 0;
+        const dMe = bfsDist(board, me.pos, myBlocks);
+        if (occ) myBlocks[op.pos] = 1;
+        let c = 0;
+        for (let q = 0; q < size; q++) if (dMe[q] >= 0) c++;
+        if (c < minComp[pi]) minComp[pi] = c;
+        if (c <= 8) trapTurns++;
+        if (dMe[op.pos] < 0) oneSplitTurns++;
+      }
+      if (day >= 3 && me.prevPos2 != null && board.d(me.pos, me.prevPos2) <= 1) hoverTurns++;
+      me.prevPos2 = me.prevPos1;
+      me.prevPos1 = me.pos;
+
       // 近接の計測（ラストワンマイル分解用）
       const dcur = board.d(me.pos, op.pos);
       if (dcur < minReach) minReach = dcur;
@@ -1413,7 +1573,8 @@ function playGame(board, cfg, rng) {
 
       // 勝利判定（同マス限定）。--noday1: 初日は出会っても成立しない（何も起こらず情報も得ない）
       if (me.pos === op.pos && !(cfg.noday1 && day === 1)) {
-        return { met: true, day, crossCellsTotal, anyCross, hintShown, stuck, minReach, firstClose2, firstClose4 };
+        return { met: true, day, crossCellsTotal, anyCross, hintShown, stuck, minReach, firstClose2, firstClose4,
+                 minComp: Math.min(minComp[0], minComp[1]), trapTurns, oneSplitTurns, hoverTurns, splitLoss: false };
       }
 
       // ---- belief 更新（交差は「今、相手の直前の道を横切った側」だけが知る） ----
@@ -1479,7 +1640,47 @@ function playGame(board, cfg, rng) {
       void prevLastPath;
     }
   }
-  return { met: false, day: null, crossCellsTotal, anyCross, hintShown, stuck, minReach, firstClose2, firstClose4 };
+  // 敗北（タイムアウト）。相互分断: A は自盤で B の位置に到達できず、B も自盤で A に到達できない
+  // ＝どちらも構造的に相手のマスへ着地できない詰み型の負け。
+  let splitLoss = false;
+  if (jOn && debrisCount > 0) {
+    // 相手の立ちマスは空き扱い（相手が自盤のデブリの上に立つ一時状態を分断と数えない）
+    const occB = blocks[0][players[1].pos];
+    if (occB) blocks[0][players[1].pos] = 0;
+    const dA = bfsDist(board, players[0].pos, blocks[0]);
+    if (occB) blocks[0][players[1].pos] = 1;
+    const occA = blocks[1][players[0].pos];
+    if (occA) blocks[1][players[0].pos] = 0;
+    const dB = bfsDist(board, players[1].pos, blocks[1]);
+    if (occA) blocks[1][players[0].pos] = 1;
+    splitLoss = dA[players[1].pos] < 0 && dB[players[0].pos] < 0;
+  }
+  // --tracetrap: 最初の相互分断負けの盤面を1回だけダンプ（閉じ込めの目視確認用）
+  if (cfg.tracetrap && splitLoss && !cfg._traced) {
+    cfg._traced = true;
+    const render = (t) => {
+      const rows = [];
+      for (let r = 0; r < board.N; r++) {
+        let line = '';
+        for (let c2 = 0; c2 < board.N; c2++) {
+          const q = r * board.N + c2;
+          if (q === players[0].pos) line += blocks[t][q] ? 'a' : 'A'; // 小文字=この盤ではデブリの上
+          else if (q === players[1].pos) line += blocks[t][q] ? 'b' : 'B';
+          else line += blocks[t][q] ? '#' : '.';
+        }
+        rows.push('    ' + line);
+      }
+      return rows.join('\n');
+    };
+    const cA = compSize(board, players[0].pos, blocks[0]);
+    const cB = compSize(board, players[1].pos, blocks[1]);
+    console.log(`  [tracetrap] 相互分断で敗北した最終盤面（#=デブリ, A/B=シーカー）`);
+    console.log(`  盤A（Aだけに効く壁, Aの成分サイズ=${cA}, 最小=${minComp[0]}）:\n${render(0)}`);
+    console.log(`  盤B（Bだけに効く壁, Bの成分サイズ=${cB}, 最小=${minComp[1]}）:\n${render(1)}`);
+    console.log(`  詰み（動けない手番）=${stuck}回 / 閉じ込め手番（成分≤8）=${trapTurns}回`);
+  }
+  return { met: false, day: null, crossCellsTotal, anyCross, hintShown, stuck, minReach, firstClose2, firstClose4,
+           minComp: Math.min(minComp[0], minComp[1]), trapTurns, oneSplitTurns, hoverTurns, splitLoss };
 }
 
 /* ===================== 実験ランナー ===================== */
@@ -1490,6 +1691,8 @@ function runCondition(cfg) {
   const rng = mulberry32(cfg.seed || 12345);
   let met = 0, sumDay = 0, cross = 0, anyCrossGames = 0, stuck = 0, metNoHint = 0;
   let close2 = 0, metGivenClose2 = 0, sumFirstClose2 = 0, sumLastMile = 0, sumMinDist = 0;
+  let sumTrapTurns = 0, trap8 = 0, splitLosses = 0, sumMinComp = 0, stuckInLosses = 0;
+  let oneSplitInLosses = 0, hoverInLosses = 0, oneSplitLossGames = 0, sumMinCompLoss = 0;
   const metByDay = new Array(cfg.maxDay + 1).fill(0);       // 日別の全出会い件数
   const noHintByDay = new Array(cfg.maxDay + 1).fill(0);    // 日別のノーヒント出会い件数
   for (let i = 0; i < cfg.trials; i++) {
@@ -1499,6 +1702,17 @@ function runCondition(cfg) {
     if (r.anyCross) anyCrossGames++;
     stuck += r.stuck;
     sumMinDist += r.minReach;
+    sumTrapTurns += r.trapTurns || 0;
+    if (r.minComp != null && r.minComp <= 8) trap8++;
+    if (r.minComp != null) sumMinComp += r.minComp;
+    if (!r.met) {
+      if (r.splitLoss) splitLosses++;
+      stuckInLosses += r.stuck;
+      oneSplitInLosses += r.oneSplitTurns || 0;
+      hoverInLosses += r.hoverTurns || 0;
+      if ((r.oneSplitTurns || 0) > 0) oneSplitLossGames++;
+      sumMinCompLoss += r.minComp != null ? r.minComp : 0;
+    }
     if (r.firstClose2 !== null) {
       close2++;
       sumFirstClose2 += r.firstClose2;
@@ -1520,6 +1734,17 @@ function runCondition(cfg) {
     lastMile: metGivenClose2 ? sumLastMile / metGivenClose2 : NaN, // 接近から着地までの日数
     minDist: sumMinDist / cfg.trials,                 // 到達した最小距離の平均
     metByDay, noHintByDay, trials: cfg.trials, maxDay: cfg.maxDay,
+    // 閉じ込め診断（実験20）
+    trapTurnsPerGame: sumTrapTurns / cfg.trials,          // 小部屋（成分≤8）に居た手番数/試合
+    trap8Rate: (100 * trap8) / cfg.trials,                // 一度でも成分≤8に落ちた試合の割合
+    avgMinComp: sumMinComp / cfg.trials,                  // 最小連結成分サイズの平均（49=無傷）
+    lossCount: cfg.trials - met,
+    splitLossRate: met < cfg.trials ? (100 * splitLosses) / (cfg.trials - met) : NaN, // 負けのうち相互分断
+    stuckPerLoss: met < cfg.trials ? stuckInLosses / (cfg.trials - met) : NaN,        // 負け試合あたりの詰み回数
+    oneSplitPerLoss: met < cfg.trials ? oneSplitInLosses / (cfg.trials - met) : NaN,  // 負けあたり片側分断手番数
+    oneSplitLossRate: met < cfg.trials ? (100 * oneSplitLossGames) / (cfg.trials - met) : NaN, // 片側分断を経験した負けの率
+    hoverPerLoss: met < cfg.trials ? hoverInLosses / (cfg.trials - met) : NaN,        // 負けあたり回遊手番数
+    avgMinCompLoss: met < cfg.trials ? sumMinCompLoss / (cfg.trials - met) : NaN,     // 負け試合の最小成分平均
   };
 }
 
@@ -1551,6 +1776,15 @@ function printResult(label, r) {
   );
 }
 
+// 閉じ込め診断の表示（--trap。実験20: greedy が壁に閉じ込められる欠陥の計測）
+function printTrap(r) {
+  console.log(
+    `  [閉じ込め] 最小成分平均 ${fmt(r.avgMinComp, 1)}マス（負け ${fmt(r.avgMinCompLoss, 1)}）  成分≤8経験 ${fmt(r.trap8Rate)}%  ` +
+    `負けの相互分断率 ${fmt(r.splitLossRate)}%  片側分断経験 ${fmt(r.oneSplitLossRate)}%(手番${fmt(r.oneSplitPerLoss, 2)}/負)  ` +
+    `回遊/負 ${fmt(r.hoverPerLoss, 2)}  詰み/負 ${fmt(r.stuckPerLoss, 2)}`
+  );
+}
+
 // ラストワンマイル分解の表示
 function printDiag(label, r) {  console.log(
     `${label.padEnd(34)} 出会い ${fmt(r.meetRate).padStart(5)}%  ` +
@@ -1578,6 +1812,12 @@ function main() {
     else if (a.startsWith('--jcap=')) flags.jcap = +a.slice(7);
     else if (a.startsWith('--jinit=')) flags.jinit = +a.slice(8);
     else if (a.startsWith('--sgate=')) flags.sgate = +a.slice(8);
+    else if (a === '--trap') flags.trap = true;
+    else if (a === '--tracetrap') flags.tracetrap = true;
+    else if (a.startsWith('--mob=')) flags.mob = +a.slice(6);
+    else if (a.startsWith('--soft=')) flags.soft = +a.slice(7);
+    else if (a.startsWith('--safe=')) flags.safe = +a.slice(7);
+    else if (a === '--safe') flags.safe = 8;
     else if (a === '--jasym') flags.jasym = true;
     else if (a === '--jinterior') flags.jinterior = true;
     else if (a === '--jdump') flags.jdump = true;
@@ -1616,7 +1856,8 @@ function main() {
         share: !!flags.share, oppModel: flags.opp || 'random', seed: flags.seed || 12345,
         eps: flags.eps || 0, jeps: flags.jeps || 0,
         ojama: flags.ojama || 'none', jvariant: flags.jvariant || 'shared', jcap: flags.jcap, jinit: flags.jinit || 0,
-        sgate: flags.sgate,
+        sgate: flags.sgate, tracetrap: !!flags.tracetrap,
+        mob: flags.mob || 0, soft: flags.soft || 0, safe: flags.safe || 0,
         aware: flags.aware || null, sharedCross: !!flags.sharedCross,
         precross: !!flags.precross,
         noday1: !!flags.noday1,
@@ -1625,10 +1866,11 @@ function main() {
       };
       const jl = cfg.ojama !== 'none' ? ` 邪魔${cfg.ojama}-${cfg.jvariant}${cfg.jcap != null ? `(上限${cfg.jcap})` : ''}${cfg.jinit ? `(布石${cfg.jinit}${cfg.jasym ? '非対称' : ''})` : ''}${cfg.jinterior ? '(外周禁止)' : ''}` : '';
       const pl = cfg.pfocal && cfg.pfocal !== 'center' ? `[${cfg.pfocal}]` : '';
-      const label = `${N}x${N} ${dice.label} ${maxDay}日 減衰${decay} ${policy}${pl}${cfg.aware ? `(認識${cfg.aware})` : ''}${cfg.eps ? `(ε=${cfg.eps})` : ''}${cfg.jeps ? `(κε=${cfg.jeps})` : ''}${cfg.share ? '+出目' : ''}${cfg.precross ? '+先交差' : ''}${cfg.oppModel === 'greedy' ? ' oppV2' : ''}${jl}`;
+      const label = `${N}x${N} ${dice.label} ${maxDay}日 減衰${decay} ${policy}${pl}${cfg.aware ? `(認識${cfg.aware})` : ''}${cfg.mob ? `(可動${cfg.mob})` : ''}${cfg.soft ? `(揺${cfg.soft})` : ''}${cfg.safe ? `(安全${cfg.safe})` : ''}${cfg.eps ? `(ε=${cfg.eps})` : ''}${cfg.jeps ? `(κε=${cfg.jeps})` : ''}${cfg.share ? '+出目' : ''}${cfg.precross ? '+先交差' : ''}${cfg.oppModel === 'greedy' ? ' oppV2' : ''}${jl}`;
       const res = runCondition(cfg);
       printResult(label, res);
       if (flags.nhday) printNoHintByDay(res);
+      if (flags.trap) printTrap(res);
     }
   }
 }
