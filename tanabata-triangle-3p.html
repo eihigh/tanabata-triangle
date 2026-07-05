@@ -107,6 +107,8 @@
   .cell.cross::after{content:"✦";color:var(--sakura);position:absolute;text-shadow:0 0 8px rgba(248,179,197,.8);}
   .cell.newcross::after{animation:pop .6s ease;}
   @keyframes pop{0%{transform:scale(0);}60%{transform:scale(1.6);}100%{transform:scale(1);}}
+  .cell.hole{background:radial-gradient(circle,#000 30%,#1a0f2e 70%,#3a1a5a);border-color:#6a3a9a;box-shadow:inset 0 0 10px rgba(150,80,220,.6);}
+  .cell.hole::before{content:"🕳️";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:clamp(15px,4.6vw,24px);line-height:1;}
   .cell.debris{background:repeating-linear-gradient(45deg,#3a2233,#3a2233 4px,#2a1826 4px,#2a1826 8px);border-color:#5a2a4a;}
   .cell.debris::before{content:"🪨";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:clamp(16px,5vw,26px);line-height:1;opacity:.95;}
   .cell.me::before,.cell.p0::before,.cell.p1::before{content:"";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:clamp(15px,4.6vw,24px);line-height:1;}
@@ -217,7 +219,8 @@
     <div class="panel">
       <h2>ルール</h2>
       <ul>
-        <li>二人のシーカーは互いの位置が見えない。7×7・サイコロの合計ちょうどで移動。</li>
+        <li>二人のシーカーは互いの位置が見えない。7×7・サイコロの目ちょうどで移動。</li>
+        <li>盤の<b>中央</b>は🕳️<b>ブラックホール</b>。着地も通過（飛び越し）も一切できない恒久的な壁。「とりあえず真ん中で待ち合わせ」は通用しない。</li>
         <li>手番の頭で、<b>自分の直前の道</b>と<b>相手の直前の道</b>が重なった交差マス✦が<b>自分だけ</b>に見える。それを見てから動く。</li>
         <li>キングは<b>各シーカーが動く直前</b>（初日を含む）に、そのシーカーの盤へデブリを<b>好きな個数</b>置ける。ただし<b>各盤に置けるのは合計7個まで</b>。使い切ったら以後は置けない。</li>
         <li>デブリのマスには<b>止まれない</b>（移動先に選べない）が、<b>通過（飛び越し）は自由</b>。デブリは<b>置かれた本人にしか見えない</b>。</li>
@@ -261,6 +264,7 @@
       <span>👘 シーカー（織姫）</span>
       <span>🐂 シーカー（彦星）</span>
       <span>🪨=各盤のデブリ</span>
+      <span>🕳️=中央ブラックホール</span>
       <span>✦=検閲できる交差ヒント</span>
       <span><b>濃い枠=直前の道</b>（ヒントの素）／薄い枠=古い道</span>
     </div>
@@ -299,6 +303,10 @@ const N=7, SZ=N*N, DECAY=1;
 let NDICE=1, FACES=6, REROLL=0; // 使うサイコロ（設定画面で変更可。REROLL=出目がこの値以下なら振り直し）
 let MAX_DAY=7; // 難易度で変化（normal=7日 / hard=3日）
 const CENTER=((N-1>>1))*N+((N-1)>>1);
+/* 中央ブラックホール（実験23）: 初期状態から着地も通過も不可の恒久的な壁。両盤共通・全員に見える。
+   実験6以来の支配戦略「中心へ行くだけ」の焦点＝盤中央そのものを物理除去する約束事キラー。 */
+const HOLE=CENTER;
+const HOLE_ARR=new Uint8Array(SZ);HOLE_ARR[HOLE]=1;
 const NEG=-1e9;
 const AI_THINK=320, AI_POST=380; // AI手番の演出ディレイ(ms)
 const ROLES=['orihime','hikoboshi','ojama'];
@@ -691,6 +699,7 @@ function renderBoardSeek(){
   const ncSet=new Set(G.preCross||[]); // 先交差：手番中はじめに判明した交差を常にハイライト
   for(let c=0;c<SZ;c++){
     const d=document.createElement('div');d.className='cell';
+    if(c===HOLE){d.classList.add('hole');board.appendChild(d);continue;} // 中央ブラックホール
     // 通過可能デブリ: 止まれないだけなので、軌跡・経路プレビューはデブリの上にも重ねて描く
     if(deb[c])d.classList.add('debris');
     if(st[c]>NEG)d.classList.add('trail');
@@ -709,10 +718,11 @@ function renderBoardSeek(){
 $('s-roll').onclick=()=>{
   const r=rollDice();G.roll=r.sum;G.dice=r.dice; // 実際の各サイコロの目を見せる（1d6は1個、2dXは2個）
   G.sel=null;G.selPath=null;
-  // 通過可能デブリ（実験21）: 経路はデブリを飛び越せる（開盤で計算）。着地だけ選べない。
+  // 通過可能デブリ（実験21）: 経路はデブリを飛び越せる。ただしブラックホール（実験23）は
+  // 通過も着地も不可なので、経路計算の壁として渡す。着地はデブリ・ホールとも除外。
   const deb=G.debris[G._idx];
-  G.layers=computeLayers(G.pos[G._idx],G.roll,null);
-  G.reach=[...G.layers[G.roll]].filter(c=>!deb[c]);
+  G.layers=computeLayers(G.pos[G._idx],G.roll,HOLE_ARR);
+  G.reach=[...G.layers[G.roll]].filter(c=>!deb[c]&&c!==HOLE);
   if(G.reach.length===0){ // 詰み
     applyStuck(G._idx,G.roll);G._phase='done';G.lastCross=[];renderSeeker();
   }else{G._phase='pick';renderSeeker();}
@@ -729,7 +739,7 @@ $('s-end').onclick=()=>advance();
 /* ===== おじゃま手番（人間） ===== */
 function legalOjamaCells(target){
   const deb=G.debris[target],out=[];
-  for(let c=0;c<SZ;c++)if(!deb[c]&&c!==G.pos[0]&&c!==G.pos[1])out.push(c);
+  for(let c=0;c<SZ;c++)if(!deb[c]&&c!==G.pos[0]&&c!==G.pos[1]&&c!==HOLE)out.push(c);
   return out;
 }
 
@@ -772,6 +782,7 @@ function renderBoardOjama(){
     const last=new Set(G.moved[idx]?G.lastPath[idx]:[]); // 直前の移動経路（ヒントの素）
     for(let c=0;c<SZ;c++){
       const d=document.createElement('div');d.className='cell';
+      if(c===HOLE){d.classList.add('hole');board.appendChild(d);continue;} // 中央ブラックホール
       if(G.debris[idx][c])d.classList.add('debris');
       // 直前の道（減衰1で唯一ヒントを生む道）は濃い枠、古い軌跡は薄い枠で区別する
       if(last.has(c))d.classList.add('last'+idx);
@@ -823,6 +834,7 @@ function seekerTurnStart(idx){
     // ただしデブリ（検閲）マスは交差だったかもしれず、情報として扱わない。
     for(const x of G.lastPath[idx])if(!cs.has(x)&&!deb[x])b[x]=0;
     b[G.pos[idx]]=0; // 出会っていない
+    b[HOLE]=0; // 相手はブラックホールに立てない
     normalize(b);
   }
   G.preCross=pre;
@@ -837,7 +849,7 @@ function applySeekerMove(idx,landing,path,roll){
   // 相手への申し送り（出目のみ）
   G.news[op]={oppRoll:roll};
   // 動かなかった側（op）は「自分が roll 歩動いた」ことを観測 → 出目分布で前方伝播
-  G.belief[op]=propagate(G.belief[op],G.share?roll:null);G.belief[op][G.pos[op]]=0;normalize(G.belief[op]);
+  G.belief[op]=propagate(G.belief[op],G.share?roll:null);G.belief[op][G.pos[op]]=0;G.belief[op][HOLE]=0;normalize(G.belief[op]);
   return landing===G.pos[op];
 }
 function applyStuck(idx,roll){
@@ -845,7 +857,7 @@ function applyStuck(idx,roll){
   G.stamp[idx][G.pos[idx]]=G.turn;G.lastPath[idx]=[G.pos[idx]];G.lastRoll[idx]=roll;G.moved[idx]=true;
   G.lastCross=G.preCross;G.news[op]={oppRoll:roll};
   // idx は足止め（動けなかった）ので op の belief は前方伝播せず、現在地除外のみ
-  G.belief[op][G.pos[op]]=0;normalize(G.belief[op]);
+  G.belief[op][G.pos[op]]=0;G.belief[op][HOLE]=0;normalize(G.belief[op]);
 }
 
 /* ===== AI ===== */
@@ -1018,10 +1030,10 @@ function runAI(role,actor){
       const idx=actor.idx,type=aiType(role);
       seekerTurnStart(idx); // 先交差：振る前に交差を照合して belief 更新
       const r=rollDice(true);const roll=r.sum;
-      // 通過可能デブリ: 経路は開盤、着地からデブリを除くだけ
+      // 通過可能デブリは飛び越せるが、ブラックホールは通過も着地も不可（経路の壁）。
       const deb=G.debris[idx];
-      const layers=computeLayers(G.pos[idx],roll,null);
-      const reach=[...layers[roll]].filter(c=>!deb[c]);
+      const layers=computeLayers(G.pos[idx],roll,HOLE_ARR);
+      const reach=[...layers[roll]].filter(c=>!deb[c]&&c!==HOLE);
       if(reach.length===0){applyStuck(idx,roll);line=`出目${roll}：止まれるマスが無く足止め。`;}
       else{
         const landing=chooseSeekerLanding(idx,type,reach,layers,roll);
