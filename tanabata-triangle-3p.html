@@ -100,6 +100,10 @@
   .cell.trail0{box-shadow:inset 0 0 0 1px rgba(125,232,216,.25);}
   .cell.trail1{box-shadow:inset 0 0 0 1px rgba(255,177,100,.25);}
   .cell.lastpath{background:rgba(160,185,255,.26);}
+  /* キングの盤: 直前の道（＝ヒントが生まれる唯一の道）を古い軌跡と区別して強調 */
+  .cell.last0{background:rgba(125,232,216,.28);box-shadow:inset 0 0 0 2px rgba(125,232,216,.65);}
+  .cell.last1{background:rgba(255,177,100,.28);box-shadow:inset 0 0 0 2px rgba(255,177,100,.65);}
+  .cell.trail0.old,.cell.trail1.old{opacity:.75;}
   .cell.cross::after{content:"✦";color:var(--sakura);position:absolute;text-shadow:0 0 8px rgba(248,179,197,.8);}
   .cell.newcross::after{animation:pop .6s ease;}
   @keyframes pop{0%{transform:scale(0);}60%{transform:scale(1.6);}100%{transform:scale(1);}}
@@ -265,6 +269,7 @@
       <span>🐂 シーカー（彦星）</span>
       <span>🪨=各盤のデブリ</span>
       <span>✦=検閲できる交差ヒント</span>
+      <span><b>濃い枠=直前の道</b>（ヒントの素）／薄い枠=古い道</span>
     </div>
     <div id="board-ojama"></div>
     <div class="prompt" id="o-prompt"></div>
@@ -833,10 +838,13 @@ function renderBoardOjama(){
     const board=document.createElement('div');board.className='board';
     const legal=idx===G.oTarget?new Set(legalCellsFor(idx)):new Set();
     const xhint=(idx===G.oTarget&&G.oMode==='place')?new Set(wouldCross(idx)):new Set();
+    const last=new Set(G.moved[idx]?G.lastPath[idx]:[]); // 直前の移動経路（ヒントの素）
     for(let c=0;c<SZ;c++){
       const d=document.createElement('div');d.className='cell';
       if(G.debris[idx][c])d.classList.add('debris');
-      if(G.stamp[idx][c]>NEG)d.classList.add('trail','trail'+idx);
+      // 直前の道（減衰1で唯一ヒントを生む道）は濃い枠、古い軌跡は薄い枠で区別する
+      if(last.has(c))d.classList.add('last'+idx);
+      else if(G.stamp[idx][c]>NEG)d.classList.add('trail','trail'+idx,'old');
       if(!G.debris[idx][c]){
         if(xhint.has(c))d.classList.add('crosshint');
         if(c===G.pos[0])d.classList.add('p0');
