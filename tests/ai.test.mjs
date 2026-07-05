@@ -88,6 +88,17 @@ function ok(cond, msg) {
   const c2 = key(chooseKingDebris(g, 'orihime', mulberry32(9)));
   ok(c1 === c2, 'same seed -> same debris cell');
 
+  // 相手シーカーの現在位置は絶対に選ばない（致命的手の禁止）
+  {
+    const g2 = createGame(); // 彦星(8,8)
+    let hit = false;
+    for (let s = 0; s < 60; s++) {
+      const c = chooseKingDebris(g2, 'orihime', mulberry32(1000 + s));
+      if (c.x === g2.hikoboshi.pos.x && c.y === g2.hikoboshi.pos.y) hit = true;
+    }
+    ok(!hit, 'king never places on opponent current position');
+  }
+
   // 実際に置ける
   placeDebris(g, 'orihime', chooseKingDebris(g, 'orihime', mulberry32(3)));
   ok(g.phase === PHASE.MOVE_ORIHIME, 'king debris applied, advanced to move');

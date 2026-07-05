@@ -92,11 +92,16 @@ export function hints(state) {
 
 // ---- デブリ設置 -------------------------------------------------------------
 // その盤面の軌跡が無い（かつ盤内・未デブリの）マスにのみ置ける。
+// さらに、相手シーカーの「現在位置」には置けない。ここを塞げると合流点を毎ターン
+// 封鎖してシーカーを絶対に勝たせない必勝手になってしまうため（致命的問題の修正）。
 export function canPlaceDebris(state, who, cell) {
   if (!inBounds(cell, state.size)) return false;
   const s = state[who];
   const k = key(cell);
-  return !s.trail.has(k) && !s.debris.has(k);
+  if (s.trail.has(k) || s.debris.has(k)) return false;
+  const other = who === 'orihime' ? 'hikoboshi' : 'orihime';
+  if (eq(cell, state[other].pos)) return false; // 相手の現在位置は禁じ手
+  return true;
 }
 
 export function placeDebris(state, who, cell) {

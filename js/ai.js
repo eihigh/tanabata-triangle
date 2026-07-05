@@ -12,6 +12,7 @@ import {
   enumerateMoves,
   reachEndsGrid,
   buildBlockedGrid,
+  canPlaceDebris,
   hints as trueHints,
 } from './engine.js';
 
@@ -174,11 +175,8 @@ export function chooseKingDebris(state, who, rng = Math.random, params = KING) {
   let base = minDistFocal(reachEndsGrid(size, steps, startIdx, grid));
   if (!Number.isFinite(base)) base = manhattan(seeker.pos, focal); // 既に詰み気味
 
-  const placeable = (x, y) => {
-    if (x < 0 || y < 0 || x >= size || y >= size) return false;
-    const k = key({ x, y });
-    return !seeker.trail.has(k) && !seeker.debris.has(k);
-  };
+  // 設置可否はエンジンの規則に一本化（軌跡・既存デブリ・盤外・相手の現在位置を除外）
+  const placeable = (x, y) => canPlaceDebris(state, who, { x, y });
   // 候補: シーカー付近の設置可能マス（軌跡・既存デブリ・盤外は除外）
   const cands = [];
   const R = params.radius;

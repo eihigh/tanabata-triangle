@@ -221,21 +221,23 @@ function setupKingView(who) {
   debrisPick = null;
   ui.btnPlaceDebris.disabled = true;
 
+  const other = who === 'orihime' ? 'hikoboshi' : 'orihime';
+  const targetCanvas = who === 'orihime' ? ui.canvas : ui.canvas2;
   const render = () => {
     // 左：織姫盤、右：彦星盤（両方フル表示）
     drawBoard(ui.canvas, state, { who: 'orihime', reveal: true });
     drawBoard(ui.canvas2, state, { who: 'hikoboshi', reveal: true });
-    // 選択中デブリのハイライトは対象盤に丸を描く（簡易）
+    // 設置対象盤では相手シーカーの現在位置（禁じ手）を明示する
+    markForbidden(targetCanvas, state[other].pos);
   };
   render();
   labelKingBoards(who);
 
-  const targetCanvas = who === 'orihime' ? ui.canvas : ui.canvas2;
   const onClick = ( evt) => {
     const cell = cellFromEvent(targetCanvas, evt);
     if (!cell) return;
     if (!canPlaceDebris(state, who, cell)) {
-      flashStatus('そのマスには置けません（軌跡上／盤外）');
+      flashStatus('そのマスには置けません（軌跡上／盤外／相手の現在位置）');
       return;
     }
     debrisPick = cell;
@@ -269,6 +271,26 @@ function markPick(canvas, cell) {
   ctx.strokeStyle = '#fff';
   ctx.lineWidth = 3;
   ctx.strokeRect(cell.x * s + 2, cell.y * s + 2, s - 4, s - 4);
+}
+
+// 禁じ手（相手の現在位置）を赤い○/で明示する
+function markForbidden(canvas, cell) {
+  const ctx = canvas.getContext('2d');
+  const s = canvas.width / state.size;
+  const cx = cell.x * s + s / 2;
+  const cy = cell.y * s + s / 2;
+  const r = s * 0.42;
+  ctx.save();
+  ctx.strokeStyle = '#ff5470';
+  ctx.lineWidth = Math.max(2, s * 0.06);
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(cx - r * 0.7, cy + r * 0.7);
+  ctx.lineTo(cx + r * 0.7, cy - r * 0.7);
+  ctx.stroke();
+  ctx.restore();
 }
 
 // ---- シーカー（移動）-------------------------------------------------------

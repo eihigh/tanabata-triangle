@@ -68,6 +68,15 @@ function throws(fn, msg) {
   ok(!g.hikoboshi.debris.has('3,2'), 'debris board-independent');
 }
 
+// --- デブリ禁じ手: 相手シーカーの現在位置には置けない ----------------------
+{
+  const g = createGame(); // 織姫(0,0) / 彦星(8,8)
+  ok(!canPlaceDebris(g, 'orihime', { x: 8, y: 8 }), 'orihime盤に彦星の現在位置は置けない');
+  ok(!canPlaceDebris(g, 'hikoboshi', { x: 0, y: 0 }), 'hikoboshi盤に織姫の現在位置は置けない');
+  ok(canPlaceDebris(g, 'orihime', { x: 8, y: 7 }), '相手の隣接マスは置ける');
+  throws(() => placeDebris(g, 'orihime', { x: 8, y: 8 }), 'placeDebrisは相手の現在位置を拒否');
+}
+
 // --- 移動の合法性 -----------------------------------------------------------
 {
   const g = createGame({ START: { orihime: { x: 2, y: 2 }, hikoboshi: { x: 6, y: 6 } } });
