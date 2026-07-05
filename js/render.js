@@ -1,5 +1,5 @@
 // Canvas 描画。純粋にゲーム状態＋ビュー指定を受け取って1つの盤面を描く。
-import { hints, key, parseKey } from './engine.js';
+import { key, parseKey } from './engine.js';
 
 const COLORS = {
   orihime: { piece: '#e84a8a', trail: 'rgba(232,74,138,0.28)', label: '織姫' },
@@ -29,7 +29,9 @@ export function drawBoard(canvas, state, opts = {}) {
   ctx.fillRect(0, 0, W, W);
 
   const s = state[who];
-  const hintSet = hints(state);
+  // 交差ヒントは各シーカーの手番開始時（移動前）に凍結したスナップショットを使う。
+  // 移動中にライブ再計算しない。
+  const hintSet = s.revealedHints;
 
   // 軌跡（この盤面のシーカーのみ）
   ctx.fillStyle = COLORS[who].trail;

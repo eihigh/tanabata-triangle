@@ -9,7 +9,8 @@ export const DEFAULTS = {
   STEPS_PER_MOVE: 3, // 1手でちょうど3マス
   MAX_ROUNDS: 7, // 各シーカーが7回移動
   DEBRIS_PER_TURN: 1, // 移動前に王様が置くデブリ数
-  START: { orihime: { x: 2, y: 2 }, hikoboshi: { x: 6, y: 6 } },
+  START: { orihime: { x: 0, y: 0 }, hikoboshi: { x: 8, y: 8 } },
+  INITIAL_CENTER_DEBRIS: true, // 初期状態で両盤の中央にデブリを1個置く
 };
 
 // フェーズ
@@ -40,11 +41,18 @@ const inBounds = (c, size) => c.x >= 0 && c.y >= 0 && c.x < size && c.y < size;
 // ---- 初期化 -----------------------------------------------------------------
 export function createGame(config = {}) {
   const cfg = { ...DEFAULTS, ...config };
-  const mkSeeker = (start) => ({
-    pos: { ...start },
-    trail: new Set([key(start)]), // 開始マスも軌跡に含む
-    debris: new Set(),
-  });
+  // 初期中央デブリ（開始マス上には置けないので、開始マスと重ならない盤にのみ置く）
+  const center = { x: Math.floor(cfg.BOARD_SIZE / 2), y: Math.floor(cfg.BOARD_SIZE / 2) };
+  const mkSeeker = (start) => {
+    const debris = new Set();
+    if (cfg.INITIAL_CENTER_DEBRIS && !eq(start, center)) debris.add(key(center));
+    return {
+      pos: { ...start },
+      trail: new Set([key(start)]), // 開始マスも軌跡に含む
+      debris,
+      revealedHints: new Set(), // 手番開始時に凍結される交差ヒント
+    };
+  };
   return {
     size: cfg.BOARD_SIZE,
     stepsPerMove: cfg.STEPS_PER_MOVE,
@@ -92,6 +100,8 @@ export function placeDebris(state, who, cell) {
   if (state.debrisPlaced >= state.debrisPerTurn) {
     state.debrisPlaced = 0;
     state.phase = movePhaseFor(who);
+    // 「移動前」の唯一のヒント更新点。ここで凍結し、移動中・移動後は変えない。
+    state[who].revealedHints = hints(state);
   }
   return state;
 }
