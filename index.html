@@ -53,6 +53,48 @@
       </div>
     </div>
 
+    <!-- ゲーム開始前の役選択 -->
+    <div id="setup" class="veil">
+      <div class="veil-card setup-card">
+        <div class="veil-icon">🎋</div>
+        <h2>七夕トライアングル</h2>
+        <p class="setup-lead">各役の担当を選んでください（任意の組み合わせ）</p>
+        <div class="role-picker" id="role-picker">
+          <div class="role-row" data-role="orihime">
+            <span class="role-name">織姫</span>
+            <div class="seg">
+              <button data-val="human">人間</button>
+              <button data-val="ai">AI</button>
+            </div>
+          </div>
+          <div class="role-row" data-role="hikoboshi">
+            <span class="role-name">彦星</span>
+            <div class="seg">
+              <button data-val="human">人間</button>
+              <button data-val="ai">AI</button>
+            </div>
+          </div>
+          <div class="role-row" data-role="king">
+            <span class="role-name">王様</span>
+            <div class="seg">
+              <button data-val="human">人間</button>
+              <button data-val="ai">AI</button>
+            </div>
+          </div>
+        </div>
+        <p class="setup-note" id="setup-note"></p>
+        <button id="btn-start" class="primary big">ゲーム開始</button>
+      </div>
+    </div>
+
+    <!-- AI 思考中（人間シーカーがいる対戦では盤面を伏せる）-->
+    <div id="thinking" class="veil hidden">
+      <div class="veil-card">
+        <div class="veil-icon spin">🤖</div>
+        <p id="thinking-text"></p>
+      </div>
+    </div>
+
     <!-- パス回しハンドオフ -->
     <div id="handoff" class="veil hidden">
       <div class="veil-card">

@@ -17,8 +17,11 @@ import {
   PHASE,
 } from './engine.js';
 import { drawBoard, COLORS } from './render.js';
+import { chooseSeekerMove, chooseKingDebris } from './ai.js';
 
 const SEEKER_LABEL = { orihime: '織姫', hikoboshi: '彦星' };
+const THINK_MS = 550; // AI が「考える」演出の間
+const RESULT_MS = 550; // AI の結果を見せる間
 
 const el = (id) => document.getElementById(id);
 
@@ -42,23 +45,43 @@ const ui = {
   overlayTitle: el('overlay-title'),
   overlayText: el('overlay-text'),
   overlayBtn: el('overlay-btn'),
+  setup: el('setup'),
+  setupNote: el('setup-note'),
+  thinking: el('thinking'),
+  thinkingText: el('thinking-text'),
 };
+
+// 役の担当: 'human' | 'ai'
+let roles = { orihime: 'human', hikoboshi: 'ai', king: 'ai' };
 
 let state;
 let path; // 移動入力中の {x,y} 配列（先頭=現在位置）
 let debrisPick; // 王様が仮選択中のデブリマス {x,y}
+
+// 現在の手番の担当が AI か
+function actorIsAI() {
+  return isDebrisPhase(state) ? roles.king === 'ai' : roles[activeSeeker(state)] === 'ai';
+}
+// 人間シーカーが1人でもいると、AI手番中に盤面を見せると隠し情報が漏れる。
+// その場合は AI 手番は盤面を伏せる（人間が王様/不在なら見せてよい）。
+const canRevealAI = () => roles.orihime !== 'human' && roles.hikoboshi !== 'human';
 
 function start() {
   state = createGame();
   path = null;
   debrisPick = null;
   ui.overlay.classList.add('hidden');
+  ui.setup.classList.add('hidden');
+  ui.thinking.classList.add('hidden');
+  ui.handoff.classList.add('hidden');
   beginPhase();
 }
 
-// 各フェーズ開始時にハンドオフ画面を挟む
+// 各フェーズ開始時: AI 手番なら自動進行、人間手番ならハンドオフ画面を挟む
 function beginPhase() {
   if (state.phase === PHASE.GAME_OVER) return showResult();
+  if (actorIsAI()) return runAITurn();
+
   const who = activeSeeker(state);
   const king = isDebrisPhase(state);
   const target = SEEKER_LABEL[who];
@@ -72,6 +95,93 @@ function beginPhase() {
     ui.handoff.classList.add('hidden');
     enterPhase();
   };
+}
+
+// ---- AI 手番 ---------------------------------------------------------------
+function runAITurn() {
+  const debris = isDebrisPhase(state);
+  const who = activeSeeker(state);
+  const actorLabel = debris ? '王様' : SEEKER_LABEL[who];
+  const reveal = canRevealAI();
+  ui.handoff.classList.add('hidden');
+  hideControls();
+
+  if (reveal) {
+    // 観戦可（人間シーカー不在）: 盤面を見せて演出
+    ui.thinking.classList.add('hidden');
+    updateHeader();
+    if (debris) renderKingReadonly(who);
+    else renderSeekerReadonly(who);
+    ui.roleBadge.textContent = `${actorLabel}(AI)`;
+    ui.status.textContent = debris
+      ? `王様(AI)が ${SEEKER_LABEL[who]}の盤面 にデブリを検討中…`
+      : `${SEEKER_LABEL[who]}(AI)が移動先を検討中…`;
+  } else {
+    // 人間シーカーがいる: 盤面を伏せて思考中カードのみ
+    ui.thinkingText.textContent = `${actorLabel}(AI)が${debris ? 'デブリを配置' : '移動'}中…`;
+    ui.thinking.classList.remove('hidden');
+  }
+
+  setTimeout(() => aiAct(debris, who, reveal), THINK_MS);
+}
+
+function aiAct(debris, who, reveal) {
+  if (debris) {
+    const cell = chooseKingDebris(state, who);
+    if (cell) placeDebris(state, who, cell);
+    if (reveal) {
+      renderKingReadonly(who);
+      if (cell) markPick(who === 'orihime' ? ui.canvas : ui.canvas2, cell);
+      ui.status.textContent = `王様(AI)が (${cell.x}, ${cell.y}) にデブリを置いた`;
+      setTimeout(beginPhase, RESULT_MS);
+    } else {
+      ui.thinking.classList.add('hidden');
+      beginPhase();
+    }
+    return;
+  }
+
+  // 移動
+  const move = chooseSeekerMove(state, who);
+  if (!move) {
+    resolveStuck(state);
+    return showResult();
+  }
+  applyMove(state, who, move.path);
+  if (reveal) {
+    renderSeekerReadonly(who);
+    ui.status.textContent = `${SEEKER_LABEL[who]}(AI)が (${move.end.x}, ${move.end.y}) へ移動`;
+    setTimeout(() => (state.winner ? showResult() : beginPhase()), RESULT_MS);
+  } else {
+    ui.thinking.classList.add('hidden');
+    if (state.winner) showResult();
+    else beginPhase();
+  }
+}
+
+function hideControls() {
+  ui.moveControls.classList.add('hidden');
+  ui.debrisControls.classList.add('hidden');
+}
+
+// 王様ビューを操作なしで描画（AI観戦用）
+function renderKingReadonly(who) {
+  ui.canvas.onclick = null;
+  ui.canvas2.onclick = null;
+  ui.boards.classList.add('king');
+  drawBoard(ui.canvas, state, { who: 'orihime', reveal: true });
+  drawBoard(ui.canvas2, state, { who: 'hikoboshi', reveal: true });
+  labelKingBoards(who);
+}
+
+// シーカービューを操作なしで描画（AI観戦用）
+function renderSeekerReadonly(who) {
+  ui.canvas.onclick = null;
+  ui.canvas2.onclick = null;
+  ui.boards.classList.remove('king');
+  el('board-label').textContent = `${SEEKER_LABEL[who]}の盤面`;
+  el('board2-label').textContent = '';
+  drawBoard(ui.canvas, state, { who, reveal: false });
 }
 
 function enterPhase() {
@@ -240,13 +350,51 @@ function refreshMoveControls(who) {
 // ---- 勝敗 ------------------------------------------------------------------
 function showResult() {
   ui.handoff.classList.add('hidden');
+  ui.thinking.classList.add('hidden');
+  hideControls();
   const seekersWin = state.winner === 'seekers';
   ui.overlayTitle.textContent = seekersWin ? '🎋 シーカーの勝ち！' : '👑 王様の勝ち！';
   ui.overlayText.textContent = seekersWin
     ? `織姫と彦星は (${state.meetingCell.x}, ${state.meetingCell.y}) で出会えた！`
     : '規定手番までに二人は出会えなかった…';
   ui.overlay.classList.remove('hidden');
-  ui.overlayBtn.onclick = start;
+  ui.overlayBtn.onclick = showSetup;
+}
+
+// ---- 役選択（開始前）-------------------------------------------------------
+function showSetup() {
+  ui.overlay.classList.add('hidden');
+  ui.handoff.classList.add('hidden');
+  ui.thinking.classList.add('hidden');
+  hideControls();
+  ui.setup.classList.remove('hidden');
+}
+
+function initRolePicker() {
+  el('role-picker')
+    .querySelectorAll('.role-row')
+    .forEach((row) => {
+      const role = row.dataset.role;
+      const buttons = row.querySelectorAll('.seg button');
+      const paint = () =>
+        buttons.forEach((b) => b.classList.toggle('active', b.dataset.val === roles[role]));
+      buttons.forEach((b) =>
+        b.addEventListener('click', () => {
+          roles[role] = b.dataset.val;
+          paint();
+          updateSetupNote();
+        }),
+      );
+      paint();
+    });
+  updateSetupNote();
+}
+
+function updateSetupNote() {
+  const humanSeeker = roles.orihime === 'human' || roles.hikoboshi === 'human';
+  ui.setupNote.textContent = humanSeeker
+    ? 'AIの手番中は盤面を伏せます（人間シーカーへの情報漏れ防止）。'
+    : '人間シーカーがいないため、AIの手番も盤面を表示します（観戦）。';
 }
 
 // ---- ユーティリティ --------------------------------------------------------
@@ -270,6 +418,7 @@ function flashStatus(msg) {
 
 // 起動
 window.addEventListener('DOMContentLoaded', () => {
-  el('btn-restart').onclick = start;
-  start();
+  el('btn-restart').onclick = showSetup;
+  el('btn-start').onclick = start;
+  initRolePicker();
 });

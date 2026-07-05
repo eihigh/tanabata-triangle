@@ -240,6 +240,67 @@ button:disabled {
   font-size: 0.9rem;
 }
 
+/* 役選択 */
+.setup-card {
+  max-width: 420px;
+}
+.setup-lead {
+  font-size: 1rem !important;
+  color: var(--muted);
+  margin-bottom: 20px !important;
+}
+.role-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.role-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+.role-name {
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+.seg {
+  display: inline-flex;
+  border: 1px solid #38416a;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.seg button {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: 9px 22px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.seg button.active {
+  background: var(--accent);
+  color: #fff;
+}
+.setup-note {
+  font-size: 0.82rem !important;
+  color: var(--muted);
+  min-height: 1.2em;
+  margin: 0 0 20px !important;
+}
+
+.veil-icon.spin {
+  animation: spin 1.2s ease-in-out infinite;
+}
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  50% { transform: rotate(180deg); }
+  100% { transform: rotate(360deg); }
+}
+
 .hidden {
   display: none !important;
 }

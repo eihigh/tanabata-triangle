@@ -144,6 +144,39 @@ export function hasAnyLegalMove(state, who) {
   return dfs(state[who].pos, state.stepsPerMove);
 }
 
+// ちょうど stepsPerMove マスの合法な経路を全列挙する（重複端点含む）。
+// opts.blocked: 追加でブロック扱いする "x,y" の Set（王様AIの評価用）。
+// 返り値: [{ end:{x,y}, path:[dirName,...] }, ...]（最大 4^stepsPerMove 通り）。
+export function enumerateMoves(state, who, opts = {}) {
+  const extra = opts.blocked || null;
+  const blocked = (c) =>
+    state[who].debris.has(key(c)) || (extra && extra.has(key(c)));
+  const results = [];
+  const acc = [];
+  const dfs = (from, depth) => {
+    if (depth === 0) {
+      results.push({ end: from, path: acc.slice() });
+      return;
+    }
+    for (const [name, d] of Object.entries(DIRS)) {
+      const to = { x: from.x + d.x, y: from.y + d.y };
+      if (!inBounds(to, state.size) || blocked(to)) continue;
+      acc.push(name);
+      dfs(to, depth - 1);
+      acc.pop();
+    }
+  };
+  dfs(state[who].pos, state.stepsPerMove);
+  return results;
+}
+
+// 到達可能な着地マスの集合（"x,y" の Set）。opts.blocked は enumerateMoves と同じ。
+export function reachableEndSet(state, who, opts = {}) {
+  const set = new Set();
+  for (const m of enumerateMoves(state, who, opts)) set.add(key(m.end));
+  return set;
+}
+
 // path: 各要素が方向名 or {x,y} の配列。長さは stepsPerMove。
 // 検証して trail/pos を更新し、勝敗判定・フェーズ/ラウンドを進める。
 export function applyMove(state, who, path) {
