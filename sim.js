@@ -90,6 +90,19 @@
  *              選べないが、通過（飛び越し）は自由。そのマスの軌跡は読めない＝そこで
  *              起きる交差は恒久的に開示されない」。壁による分断の"完成"（神目線で
  *              どうやっても会えない盤面）が構造的に不可能になる。
+ *   --jhit[=N] : 初日〜三日目（既定 N=3 日）だけ、キングは「相手の立ちマス」にも
+ *              デブリを置ける（N 日を過ぎたら禁じ手＝通常どおり両者の現在マスは配置禁止）。
+ *              序盤の偶然合流（ラッキークリア）はダイス構造由来で置き方では削れない
+ *              （実験22-3）ため、この数日に限り mover の着地先＝相手の現在マスを直接塞ぎ
+ *              「mover が相手に乗る」出会いを阻む。キングAIはこの1個を最優先し、残り予算は
+ *              通常配置に回す。--jbudget と併用（最終ルールの追加仕様。ルール上の明快さで3日）。
+ *   --jhitbluff=P : 確率 P で直撃を「相手の実座標ではなく別マスに置く偽直撃（ブラフ）」に
+ *              差し替える。直撃は相手座標を漏らす（aware=jhit に読まれる）ので、偽直撃で
+ *              読み手を誤誘導する混合戦略。偽の場合は相手マスを塞がない（ラッキークリアは残る）。
+ *   --jsched=1,2,1,1 : --jbudget の窓ごとの配置個数を明示（末尾値が以降くり返し）。
+ *              例 1,2,1,1 = 初日窓1個・二日目窓2個・以降1個。jhit と併用すると「初日は直撃
+ *              だけ・二日目は直撃＋検閲の2個」になり、先交差で交差ヒントが出始める2日目に
+ *              検閲を回せる（初日は交差ゼロで検閲が無駄）。無指定は既定「初回窓2個・以降1個」。
  *   --jinit  : 開始前の布石数。各盤の内側（外周を除く）に jinit 個ずつ置く（合計 2×jinit、
  *              省略時 0）。N=0〜3 の難易度レバー。外周は詰み防止で禁止。
  *   --sgate  : split2 の距離ゲート。mover から相手軌跡までの距離がこれ以下のときだけ
@@ -392,6 +405,21 @@ function cageCell(board, blocked, posA, posB, rng) {
   return best;
 }
 
+// 偽直撃（jhitbluff）: 相手の実座標ではなく「相手が居そうな別マス」に直撃らしくデブリを置き、
+// aware=jhit の読み手を誤誘導する。読み手は「湧いた新デブリ＝相手位置」と読むので、実座標から
+// 十分離れた（誤誘導が効く）合法マスをランダムに選ぶ。適地が無ければ任意の合法マスへ退避。
+function jhitBluffCell(board, blockedArr, opp, posA, posB, rng) {
+  const size = board.size;
+  const far = [], any = [];
+  for (let q = 0; q < size; q++) {
+    if (blockedArr[q] || q === posA || q === posB || q === opp) continue;
+    any.push(q);
+    if (board.d(q, opp) >= 3) far.push(q); // 実座標から離すほど読み手を引き離せる
+  }
+  const pool = far.length ? far : any;
+  return pool.length ? pool[(rng() * pool.length) | 0] : -1;
+}
+
 // 集合点メニュー: 二人が約束できる複数の候補（中心＋4象限のランドマーク）。
 // すべて盤の共通知識から決まるので、二人は通信なしで同じ点を選べる。
 function landmarkMenu(board) {
@@ -448,6 +476,21 @@ function ojamaPlace(board, cfg, blocks, posA, posB, mover, rng, day, crossHints,
   // 不完全なキング（--jeps）: 確率 jeps で賢い妨害を放棄し、無作為な合法マスに置く。
   // シーカーの --eps と対をなす「人間らしいキングの取りこぼし」のモデル。
   const dumb = cfg.jeps > 0 && rng() < cfg.jeps;
+  // --jhit: 初日・二日目だけは「相手の立ちマス」にもデブリを置ける（以降は禁じ手）。
+  // 序盤の偶然合流（＝ラッキークリア）はダイス構造由来で置き方では削れない（実験22-3）ため、
+  // この2日に限り mover の着地先＝相手の現在マスを直接塞いで「mover が相手に乗る」出会いを
+  // 阻む。反対方向（相手が mover に乗る）は相手の盤で対称に塞がれる。キングはこの1個を
+  // 最優先し、残りの予算は通常配置に回す。dumb（取りこぼし）時は放棄。
+  // --jhitbluff=p: 直撃デブリは相手の座標を漏らす（aware=jhit に読まれると +14pt）ので、
+  // 確率 p で「相手の居ないマスに直撃らしく置く偽直撃（ブラフ）」に差し替える。偽の場合は
+  // 相手マスを塞がない＝ラッキークリアは潰せないが、読み手を誘導できる（実験17-2の人間ブラフのAI化）。
+  if (cfg.jhit > 0 && day <= cfg.jhit && !dumb && !blockedArr[opp]) {
+    if (cfg.jhitbluff > 0 && rng() < cfg.jhitbluff) {
+      const fake = jhitBluffCell(board, blockedArr, opp, posA, posB, rng);
+      if (fake >= 0) return { cell: fake, target }; // 偽直撃: 相手マスは開けたまま
+    }
+    return { cell: opp, target };
+  }
   if (dumb) { /* 賢い配置をスキップし、下の無作為フォールバックに落とす */ }
   else if (cfg.ojama === 'cage') cell = cageCell(board, blockedArr, posA, posB, rng);
   // afocal: 位置から予測した focal 点 F を、盤ごとに逆側から潰す賢いキング（実験11）
@@ -1442,15 +1485,21 @@ function playGame(board, cfg, rng) {
   // 以後は置けない＝終盤は眺める（キングの序盤の弱さとシーカーの終盤の窮屈さを同時に解消）。
   const budgetLeft = [cfg.jbudget | 0, cfg.jbudget | 0];
   const windowUsed = [false, false];
+  const windowIdx = [0, 0]; // 各盤の配置窓の通し番号（0=初回窓）。--jsched 用
   const placeDebrisBudget = (nextMover, curDay) => {
     if (!jOn) return;
     const first = !windowUsed[nextMover];
     windowUsed[nextMover] = true;
+    const idx = windowIdx[nextMover]++;
     if (budgetLeft[nextMover] <= 0) return;
     // --jfront=N: 序盤偏重配置。各窓で最大 N 個まで置く（予算が尽きるまで）。
     // 例: --jfront=7 → 初回窓で全7個を一気投下。--jfront=4 → 4個,3個,... で早期に集中。
+    // --jsched=1,2,1,1: 窓ごとの配置個数を明示（末尾値が以降くり返し）。
+    //   例 1,2,1,1 = 初日窓1個・二日目窓2個・以降1個。ラッキークリアが二日目に偏る対策。
     // 無指定（既定）は「初回窓2個・以降1個」で6日目まで分散。
-    const perWindow = cfg.jfront > 0 ? cfg.jfront : (first ? 2 : 1);
+    const perWindow = cfg.jsched
+      ? cfg.jsched[Math.min(idx, cfg.jsched.length - 1)]
+      : (cfg.jfront > 0 ? cfg.jfront : (first ? 2 : 1));
     const n = Math.min(perWindow, budgetLeft[nextMover]);
     for (let i = 0; i < n; i++) {
       const ctx = buildKingContext(nextMover);
@@ -1521,6 +1570,10 @@ function playGame(board, cfg, rng) {
   }
 
   let turn = 0, crossCellsTotal = 0, anyCross = false, stuck = 0, hintShown = false;
+  // 日別ヒント発生の計測: hintCellsByDay=その日にシーカーへ開示された✦交差セルの延べ数、
+  // hintTurnsByDay=1つ以上のヒントを見た手番数（検閲で消えた分は含まない＝実際に見えたヒント）。
+  const hintCellsByDay = new Array(maxDay + 1).fill(0);
+  const hintTurnsByDay = new Array(maxDay + 1).fill(0);
   // 閉じ込め診断（実験20）: 各シーカーが自盤で属する空きマス連結成分の最小サイズと、
   // 小部屋（成分サイズ≤8）に居た手番数。デブリ盤があるときだけ意味を持つ。
   // oneSplitTurns=自盤の壁で相手の現在マスに到達できない（＝自分からは会いに行けない）手番数。
@@ -1544,8 +1597,31 @@ function playGame(board, cfg, rng) {
       const me = players[pi], op = players[1 - pi];
       // 2日目以降: このシーカーが動く"前"に、その盤へデブリを1個置く（初日は布石のみ）。
       // --jbudget（最終ルール）では初日を含む毎シーカー移動前の窓で可変個数置く。
+      // aware=jhit の読み合い用に、配置"前"の自盤デブリ集合を控えておく（差分＝この手番の新デブリ）。
+      let jhitBefore = null;
+      if (cfg.aware === 'jhit' && cfg.jhit > 0 && day <= cfg.jhit && jOn && policy !== 'random') {
+        const arr = blocks[pi]; jhitBefore = new Set();
+        for (let q = 0; q < size; q++) if (arr[q]) jhitBefore.add(q);
+      }
       if (cfg.jbudget > 0) placeDebrisBudget(pi, day);
       else if (day >= 2) placeDebris(pi, day);
+      // aware=jhit: 初日・二日目の「相手直撃（--jhit）」は相手の現在マスちょうどにデブリを置く。
+      // だが afocal/bluff の通常配置と見分けられないので、この手番に新しく湧いた自盤デブリを
+      // 「相手はこのどれかに居るかもしれない」候補として belief に載せる（＝相手座標のリーク読み）。
+      // 本物の直撃なら座標的中、通常配置なら偽陽性——読み違えれば誘導される読み合いの土台。
+      if (jhitBefore) {
+        const arr = blocks[pi];
+        const cand = [];
+        for (let q = 0; q < size; q++) if (arr[q] && !jhitBefore.has(q)) cand.push(q);
+        if (cand.length > 0) {
+          const nb = new Float64Array(size);
+          for (const q of cand) nb[q] = 1;
+          // 既存beliefで生きている領域を優先しつつ、候補マスへ質量を集める（弱い事前を残す）
+          for (let q = 0; q < size; q++) me.belief[q] = nb[q] * (me.belief[q] > 0 ? 1 : 0.05) + me.belief[q] * 1e-3;
+          me.belief[me.pos] = 0;
+          normalize(me.belief);
+        }
+      }
       const roll = rollDice();
       const myBlocks = jOn ? blocks[pi] : null;
 
@@ -1580,6 +1656,9 @@ function playGame(board, cfg, rng) {
         for (const x of me.lastPathCells) if (opSet.has(x) && !(deb && deb[x])) preCross.push(x);
         // 開示された✦交差（検閲で消えた分は含まない）が1つでもあれば「ヒントを見た」
         if (preCross.length > 0) hintShown = true;
+        // 日別ヒント発生: 実際に開示された交差セル数と、ヒントを見た手番を記録
+        const revealed = new Set(preCross);
+        if (revealed.size > 0) { hintCellsByDay[day] += revealed.size; hintTurnsByDay[day]++; }
         // aware=censor: 検閲リークの推理。自分の直前経路は歩いた時点では全マス空きだったので、
         // いま自分の盤にデブリが乗っているマス＝この手番で新たに置かれた＝検閲された交差、と分かる。
         // 相手の経路を知らずとも「自分の経路∩自分の盤の新デブリ」だけで censored 交差を復元できる。
@@ -1715,7 +1794,7 @@ function playGame(board, cfg, rng) {
       if (me.pos === op.pos && !(cfg.noday1 && day === 1)) {
         return { met: true, day, crossCellsTotal, anyCross, hintShown, stuck, minReach, firstClose2, firstClose4,
                  minComp: Math.min(minComp[0], minComp[1]), trapTurns, oneSplitTurns, hoverTurns, splitLoss: false,
-                 debris: debrisCount };
+                 debris: debrisCount, hintCellsByDay, hintTurnsByDay };
       }
 
       // ---- belief 更新（交差は「今、相手の直前の道を横切った側」だけが知る） ----
@@ -1822,7 +1901,7 @@ function playGame(board, cfg, rng) {
   }
   return { met: false, day: null, crossCellsTotal, anyCross, hintShown, stuck, minReach, firstClose2, firstClose4,
            minComp: Math.min(minComp[0], minComp[1]), trapTurns, oneSplitTurns, hoverTurns, splitLoss,
-           debris: debrisCount };
+           debris: debrisCount, hintCellsByDay, hintTurnsByDay };
 }
 
 /* ===================== 実験ランナー ===================== */
@@ -1837,9 +1916,12 @@ function runCondition(cfg) {
   let oneSplitInLosses = 0, hoverInLosses = 0, oneSplitLossGames = 0, sumMinCompLoss = 0, sumDebris = 0;
   const metByDay = new Array(cfg.maxDay + 1).fill(0);       // 日別の全出会い件数
   const noHintByDay = new Array(cfg.maxDay + 1).fill(0);    // 日別のノーヒント出会い件数
+  const hintCellsByDay = new Array(cfg.maxDay + 1).fill(0); // 日別の開示✦交差セル延べ数（全試行合計）
+  const hintTurnsByDay = new Array(cfg.maxDay + 1).fill(0); // 日別のヒント手番数（全試行合計）
   for (let i = 0; i < cfg.trials; i++) {
     const r = playGame(board, cfg, rng);
     if (r.met) { met++; sumDay += r.day; metByDay[r.day]++; if (!r.hintShown) { metNoHint++; noHintByDay[r.day]++; } }
+    if (r.hintCellsByDay) for (let d = 1; d <= cfg.maxDay; d++) { hintCellsByDay[d] += r.hintCellsByDay[d]; hintTurnsByDay[d] += r.hintTurnsByDay[d]; }
     cross += r.crossCellsTotal;
     if (r.anyCross) anyCrossGames++;
     stuck += r.stuck;
@@ -1877,6 +1959,7 @@ function runCondition(cfg) {
     lastMile: metGivenClose2 ? sumLastMile / metGivenClose2 : NaN, // 接近から着地までの日数
     minDist: sumMinDist / cfg.trials,                 // 到達した最小距離の平均
     metByDay, noHintByDay, trials: cfg.trials, maxDay: cfg.maxDay,
+    hintCellsByDay, hintTurnsByDay,
     // 閉じ込め診断（実験20）
     debrisPerGame: sumDebris / cfg.trials,                // 実際に置かれたデブリ数/試合
     trapTurnsPerGame: sumTrapTurns / cfg.trials,          // 小部屋（成分≤8）に居た手番数/試合
@@ -1910,6 +1993,17 @@ function printNoHintByDay(r) {
     cells.push(`${d}日:${fmt(nh).padStart(4)}%/${fmt(all).padStart(4)}%`);
   }
   console.log('  ノーヒント/全出会い（日別・全試行比） ' + cells.join(' '));
+  // 日別ヒント発生: クリア率（全試行比%）と、1試合あたりの開示✦交差セル数／ヒント手番数
+  if (r.hintCellsByDay) {
+    const hc = [];
+    for (let d = 1; d <= r.maxDay; d++) {
+      const clr = (100 * r.metByDay[d]) / r.trials;
+      const cellsPer = r.hintCellsByDay[d] / r.trials;
+      const turnsPer = r.hintTurnsByDay[d] / r.trials;
+      hc.push(`${d}日:クリア${fmt(clr).padStart(4)}% ヒント${fmt(cellsPer, 2)}セル/${fmt(turnsPer, 2)}手番`);
+    }
+    console.log('  日別クリア率＆ヒント発生（1試合あたり）\n    ' + hc.join('\n    '));
+  }
 }
 
 function printResult(label, r) {
@@ -1958,6 +2052,10 @@ function main() {
     else if (a === '--jpass') flags.jpass = true;
     else if (a.startsWith('--jbudget=')) flags.jbudget = +a.slice(10);
     else if (a.startsWith('--jfront=')) flags.jfront = +a.slice(9);
+    else if (a.startsWith('--jsched=')) flags.jsched = a.slice(9).split(',').map(Number);
+    else if (a.startsWith('--jhit=')) flags.jhit = +a.slice(7);
+    else if (a === '--jhit') flags.jhit = 3;
+    else if (a.startsWith('--jhitbluff=')) flags.jhitbluff = +a.slice(12);
     else if (a.startsWith('--sgate=')) flags.sgate = +a.slice(8);
     else if (a === '--trap') flags.trap = true;
     else if (a === '--tracetrap') flags.tracetrap = true;
@@ -2005,6 +2103,8 @@ function main() {
         ojama: flags.ojama || 'none', jvariant: flags.jvariant || 'shared', jcap: flags.jcap, jinit: flags.jinit || 0,
         sgate: flags.sgate, tracetrap: !!flags.tracetrap, jpass: !!flags.jpass,
         jbudget: flags.jbudget || 0, jfront: flags.jfront || 0,
+        jsched: flags.jsched || null,
+        jhit: flags.jhit || 0, jhitbluff: flags.jhitbluff || 0,
         mob: flags.mob || 0, soft: flags.soft || 0, safe: flags.safe || 0,
         aware: flags.aware || null, sharedCross: !!flags.sharedCross,
         precross: !!flags.precross,
@@ -2012,7 +2112,7 @@ function main() {
         pfocal: flags.pfocal || 'center', jasym: !!flags.jasym, jdump: !!flags.jdump,
         jinterior: !!flags.jinterior,
       };
-      const jl = cfg.ojama !== 'none' ? ` 邪魔${cfg.ojama}-${cfg.jvariant}${cfg.jpass ? '(通過可)' : ''}${cfg.jbudget ? `(予算${cfg.jbudget})` : ''}${cfg.jcap != null ? `(上限${cfg.jcap})` : ''}${cfg.jinit ? `(布石${cfg.jinit}${cfg.jasym ? '非対称' : ''})` : ''}${cfg.jinterior ? '(外周禁止)' : ''}` : '';
+      const jl = cfg.ojama !== 'none' ? ` 邪魔${cfg.ojama}-${cfg.jvariant}${cfg.jpass ? '(通過可)' : ''}${cfg.jbudget ? `(予算${cfg.jbudget})` : ''}${cfg.jhit ? `(直撃${cfg.jhit}日)` : ''}${cfg.jcap != null ? `(上限${cfg.jcap})` : ''}${cfg.jinit ? `(布石${cfg.jinit}${cfg.jasym ? '非対称' : ''})` : ''}${cfg.jinterior ? '(外周禁止)' : ''}` : '';
       const pl = cfg.pfocal && cfg.pfocal !== 'center' ? `[${cfg.pfocal}]` : '';
       const label = `${N}x${N} ${dice.label} ${maxDay}日 減衰${decay} ${policy}${pl}${cfg.aware ? `(認識${cfg.aware})` : ''}${cfg.mob ? `(可動${cfg.mob})` : ''}${cfg.soft ? `(揺${cfg.soft})` : ''}${cfg.safe ? `(安全${cfg.safe})` : ''}${cfg.eps ? `(ε=${cfg.eps})` : ''}${cfg.jeps ? `(κε=${cfg.jeps})` : ''}${cfg.share ? '+出目' : ''}${cfg.precross ? '+先交差' : ''}${cfg.oppModel === 'greedy' ? ' oppV2' : ''}${jl}`;
       const res = runCondition(cfg);
