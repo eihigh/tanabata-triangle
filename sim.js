@@ -86,6 +86,9 @@
  *              累計上限 N 個（推奨7）。AIは初回窓に2個・以降1個ずつ置き、使い切ったら
  *              以後は何も置けない（終盤は眺める）。彦星の初回移動前にも置けるため、
  *              織姫の初手を見てから置ける情報アドがキングに生まれる。
+ *   --hole   : 中央マスを初期状態の「ブラックホール」にする（実験23）。両盤共通の
+ *              恒久的な壁で、着地も通過（飛び越し）も一切できない（通過可能デブリと違い
+ *              経路が通れない）。焦点＝盤の中心を物理的に潰し、収束点合流を根から難しくする。
  *   --jpass  : 通過可能デブリ（実験21のルール変更案）。デブリは「着地（移動先）には
  *              選べないが、通過（飛び越し）は自由。そのマスの軌跡は読めない＝そこで
  *              起きる交差は恒久的に開示されない」。壁による分断の"完成"（神目線で
@@ -435,11 +438,18 @@ function cageAround(board, blocked, M, posA, posB, rng) {
 // intel:      adapt 用の mover 挙動観測 { moves, centerHits }（省略可）。
 // moverTrail: mover 自身の直前経路（bluff のブラフ候補用・省略可）。
 // firstWindow: --jbudget の初回窓（そのシーカーの最初の移動前）かどうか（bluff 用）。
-function ojamaPlace(board, cfg, blocks, posA, posB, mover, rng, day, crossHints, censorInfo, oppTrail, intel, moverTrail, firstWindow) {
+function ojamaPlace(board, cfg, blocks, posA, posB, mover, rng, day, crossHints, censorInfo, oppTrail, intel, moverTrail, firstWindow, holeArr, holeScratch) {
   const priv = cfg.jvariant === 'private';
   // 秘匿型の標的: 「今動いた側」の盤に交互に置く
   const target = priv ? mover : 0; // shared は blocks[0]===blocks[1]
-  const blockedArr = blocks[target];
+  // ブラックホールは既に壁なので、選定時は「占有済み」として扱う（ホールに置かせない・無駄打ち防止）。
+  // 実際の設置は呼び出し側が本物の blocks[target] に書き込む（cell はホール以外が返る）。
+  let blockedArr = blocks[target];
+  if (holeArr && holeScratch) {
+    holeScratch.set(blockedArr);
+    for (let q = 0; q < holeArr.length; q++) if (holeArr[q]) holeScratch[q] = 1;
+    blockedArr = holeScratch;
+  }
   const from = priv ? (target === 0 ? posA : posB) : posA;
   const to = priv ? (target === 0 ? posB : posA) : posB;
   const opp = priv ? (target === 0 ? posB : posA) : posB; // target の相手の現在位置
@@ -1403,6 +1413,11 @@ function playGame(board, cfg, rng) {
     else { const sh = new Uint8Array(size); blocks = [sh, sh]; }
   }
   const jcap = cfg.jcap != null ? cfg.jcap : 999;
+  // ブラックホール（実験23）: 中央マスを両盤共通の恒久的な壁にする（着地も通過も不可）。
+  const holeCell = cfg.hole ? center : -1;
+  const holeArr = new Uint8Array(size);
+  if (holeCell >= 0) holeArr[holeCell] = 1;
+  const holeScratch = holeCell >= 0 ? new Uint8Array(size) : null; // king 選定用（hole を占有扱い）
   let debrisCount = 0;
   const debrisPer = [0, 0]; // 各プレイヤーの盤に置かれた数（秘匿型の役割推論用）
   // キングAIが1個置くための観測コンテキスト（placeDebris / placeDebrisBudget 共通）
@@ -1452,7 +1467,8 @@ function playGame(board, cfg, rng) {
       const ctx = buildKingContext(nextMover);
       const { cell, target } = ojamaPlace(
         board, cfg, blocks, players[0].pos, players[1].pos, nextMover, rng, curDay,
-        ctx.crossHints, ctx.censorInfo, ctx.oppTrail, ctx.intel, ctx.moverTrail, first
+        ctx.crossHints, ctx.censorInfo, ctx.oppTrail, ctx.intel, ctx.moverTrail, first,
+        holeCell >= 0 ? holeArr : null, holeScratch
       );
       if (cell >= 0) { blocks[target][cell] = 1; debrisCount++; debrisPer[target]++; budgetLeft[nextMover]--; }
       else break;
@@ -1464,7 +1480,8 @@ function playGame(board, cfg, rng) {
     const ctx = buildKingContext(nextMover);
     const { cell, target } = ojamaPlace(
       board, cfg, blocks, players[0].pos, players[1].pos, nextMover, rng, curDay,
-      ctx.crossHints, ctx.censorInfo, ctx.oppTrail, ctx.intel, ctx.moverTrail, false
+      ctx.crossHints, ctx.censorInfo, ctx.oppTrail, ctx.intel, ctx.moverTrail, false,
+      holeCell >= 0 ? holeArr : null, holeScratch
     );
     if (cell >= 0) { blocks[target][cell] = 1; debrisCount++; debrisPer[target]++; }
   };
@@ -1545,20 +1562,30 @@ function playGame(board, cfg, rng) {
       const roll = rollDice();
       const myBlocks = jOn ? blocks[pi] : null;
 
-      // 到達集合と経路サンプラ（デブリがあれば層状DP、なければ高速な事前計算）。
-      // --jpass: デブリは通過自由・着地のみ不可なので、移動は開盤どおり＝着地候補から
-      // デブリマスを除くだけ（経路サンプラも開盤の samplePath を使う）。
+      // 到達集合と経路サンプラ。通過を妨げる壁 = ブラックホール（常に）＋デブリ（--jpass 以外）。
+      // ブラックホールは着地・通過とも不可。--jpass のデブリは通過自由・着地のみ不可。
       let reach, layers = null;
-      if (jOn && debrisCount > 0) {
-        if (cfg.jpass) {
-          reach = [];
-          for (const q of board.reach[me.pos][roll]) if (!myBlocks[q]) reach.push(q);
+      const debrisAsWall = jOn && debrisCount > 0 && !cfg.jpass;
+      const needLayers = holeCell >= 0 || debrisAsWall;
+      if (needLayers) {
+        let passBlocked;
+        if (debrisAsWall) {
+          passBlocked = new Uint8Array(size);
+          for (let q = 0; q < size; q++) passBlocked[q] = holeArr[q] || myBlocks[q];
         } else {
-          layers = computeLayers(board, me.pos, roll, myBlocks);
-          reach = [];
-          const Lk = layers[roll];
-          for (let q = 0; q < size; q++) if (Lk[q]) reach.push(q);
+          passBlocked = holeArr; // 通過を妨げるのはホールのみ（jpass のデブリは飛び越せる）
         }
+        layers = computeLayers(board, me.pos, roll, passBlocked);
+        reach = [];
+        const Lk = layers[roll];
+        for (let q = 0; q < size; q++) {
+          if (!Lk[q]) continue;
+          if (cfg.jpass && myBlocks && myBlocks[q]) continue; // jpass: 着地はデブリ不可
+          reach.push(q);
+        }
+      } else if (jOn && debrisCount > 0) { // jpass・ホールなし（従来の実験21経路）
+        reach = [];
+        for (const q of board.reach[me.pos][roll]) if (!myBlocks[q]) reach.push(q);
       } else {
         reach = board.reach[me.pos][roll];
       }
@@ -1595,6 +1622,7 @@ function playGame(board, cfg, rng) {
           share ? op.lastRoll : null, op.moved, opBlocksKnown
         );
         me.belief[me.pos] = 0;
+        if (holeCell >= 0) me.belief[holeCell] = 0; // 相手はブラックホールに立てない
         normalize(me.belief);
       }
 
@@ -1731,6 +1759,7 @@ function playGame(board, cfg, rng) {
             share ? op.lastRoll : null, op.moved, opBlocksKnown
           );
           me.belief[me.pos] = 0;
+          if (holeCell >= 0) me.belief[holeCell] = 0;
           normalize(me.belief);
         }
 
@@ -1738,6 +1767,7 @@ function playGame(board, cfg, rng) {
         //     出目開示ありならその出目だけ。前方伝播と「未出会い」除外のみ。
         op.belief = propagateBelief(board, op.belief, share ? roll : null, oppModel, op.pos);
         op.belief[op.pos] = 0; // 出会っていない
+        if (holeCell >= 0) op.belief[holeCell] = 0;
         normalize(op.belief);
 
         // 反実仮想: 交差を共有すると、相手(op)も「me が uniqCross を通った＝me の現在地は
@@ -1952,6 +1982,7 @@ function main() {
     else if (a.startsWith('--jcap=')) flags.jcap = +a.slice(7);
     else if (a.startsWith('--jinit=')) flags.jinit = +a.slice(8);
     else if (a === '--jpass') flags.jpass = true;
+    else if (a === '--hole') flags.hole = true;
     else if (a.startsWith('--jbudget=')) flags.jbudget = +a.slice(10);
     else if (a.startsWith('--sgate=')) flags.sgate = +a.slice(8);
     else if (a === '--trap') flags.trap = true;
@@ -1999,7 +2030,7 @@ function main() {
         eps: flags.eps || 0, jeps: flags.jeps || 0,
         ojama: flags.ojama || 'none', jvariant: flags.jvariant || 'shared', jcap: flags.jcap, jinit: flags.jinit || 0,
         sgate: flags.sgate, tracetrap: !!flags.tracetrap, jpass: !!flags.jpass,
-        jbudget: flags.jbudget || 0,
+        jbudget: flags.jbudget || 0, hole: !!flags.hole,
         mob: flags.mob || 0, soft: flags.soft || 0, safe: flags.safe || 0,
         aware: flags.aware || null, sharedCross: !!flags.sharedCross,
         precross: !!flags.precross,
@@ -2007,7 +2038,7 @@ function main() {
         pfocal: flags.pfocal || 'center', jasym: !!flags.jasym, jdump: !!flags.jdump,
         jinterior: !!flags.jinterior,
       };
-      const jl = cfg.ojama !== 'none' ? ` 邪魔${cfg.ojama}-${cfg.jvariant}${cfg.jpass ? '(通過可)' : ''}${cfg.jbudget ? `(予算${cfg.jbudget})` : ''}${cfg.jcap != null ? `(上限${cfg.jcap})` : ''}${cfg.jinit ? `(布石${cfg.jinit}${cfg.jasym ? '非対称' : ''})` : ''}${cfg.jinterior ? '(外周禁止)' : ''}` : '';
+      const jl = cfg.ojama !== 'none' ? ` 邪魔${cfg.ojama}-${cfg.jvariant}${cfg.jpass ? '(通過可)' : ''}${cfg.jbudget ? `(予算${cfg.jbudget})` : ''}${cfg.hole ? '(中央黒穴)' : ''}${cfg.jcap != null ? `(上限${cfg.jcap})` : ''}${cfg.jinit ? `(布石${cfg.jinit}${cfg.jasym ? '非対称' : ''})` : ''}${cfg.jinterior ? '(外周禁止)' : ''}` : '';
       const pl = cfg.pfocal && cfg.pfocal !== 'center' ? `[${cfg.pfocal}]` : '';
       const label = `${N}x${N} ${dice.label} ${maxDay}日 減衰${decay} ${policy}${pl}${cfg.aware ? `(認識${cfg.aware})` : ''}${cfg.mob ? `(可動${cfg.mob})` : ''}${cfg.soft ? `(揺${cfg.soft})` : ''}${cfg.safe ? `(安全${cfg.safe})` : ''}${cfg.eps ? `(ε=${cfg.eps})` : ''}${cfg.jeps ? `(κε=${cfg.jeps})` : ''}${cfg.share ? '+出目' : ''}${cfg.precross ? '+先交差' : ''}${cfg.oppModel === 'greedy' ? ' oppV2' : ''}${jl}`;
       const res = runCondition(cfg);
