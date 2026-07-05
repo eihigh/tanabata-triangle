@@ -60,3 +60,19 @@ python3 -m http.server 8000
 node tests/engine.test.mjs
 node tests/ai.test.mjs
 ```
+
+## シミュレーター（シーカー勝率）
+
+全AI対戦をモンテカルロで多数回まわし、**乱数混入率 `epsilon`**（0=AI本来の分布〜1=完全ランダム）ごとの
+シーカーのクリア率と、**日毎（ラウンド毎）の累積クリア率**を出す。隠れ情報＋2盤面の軌跡/デブリ集合という
+状態空間の巨大さから厳密DPは非現実的なため、**各設定に壁時計タイムアウトを設けたモンテカルロ**にして、
+常に有限時間で終了し完了試行に対する率を報告する。
+
+```sh
+node tools/simulate.mjs                              # 既定（epsilon 0〜1 を掃引）
+node tools/simulate.mjs games=4000 budgetMs=6000     # 試行数/タイムアウトを指定
+node tools/simulate.mjs target=seekers               # 乱数混入をシーカーだけに（king/all も可）
+```
+
+結果は表形式で標準出力し、`tools/sim-result.csv` にも書き出す。
+（開始位置が対角コーナー＝マンハッタン距離16のため、最短でも3ラウンド目まで出会えず Day1/Day2 は必ず0%。）

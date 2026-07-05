@@ -10,7 +10,8 @@ import {
   key,
   parseKey,
   enumerateMoves,
-  reachableEndSet,
+  reachEndsGrid,
+  buildBlockedGrid,
   hints as trueHints,
 } from './engine.js';
 
@@ -94,9 +95,20 @@ function fieldFromHints(size, hintSet, sigma = 2) {
   return { field, focal: argmaxCell(field, size) };
 }
 
+// 確率 epsilon で候補から一様ランダムに選び、そうでなければソフトマックス標本抽出。
+// epsilon は「乱数混入率」: 0 で AI 本来の分布、1 で完全ランダム。
+function pickWithEpsilon(cands, scores, temperature, epsilon, rng) {
+  const eps = epsilon || 0;
+  if (eps > 0 && rng() < eps) {
+    const idx = Math.min(cands.length - 1, (rng() * cands.length) | 0);
+    return { item: cands[idx], index: idx, probs: cands.map(() => 1 / cands.length) };
+  }
+  return softmaxSample(cands, scores, temperature, rng);
+}
+
 // ---- シーカーAI -------------------------------------------------------------
-// パラメータ（挙動の調整用）
-export const SEEKER = { alpha: 1.0, beta: 6.0, gammaPath: 0.15, temperature: 0.6 };
+// パラメータ（挙動の調整用）。epsilon は乱数混入率（0=分布通り, 1=完全ランダム）。
+export const SEEKER = { alpha: 1.0, beta: 6.0, gammaPath: 0.15, temperature: 0.6, epsilon: 0 };
 
 // 自分が知る情報だけで1手（path: 方向名配列）を返す。動けない場合は null。
 // 返り値 { path, end, focal, probs } … probs は移動先候補の確率分布（デバッグ/表示用）。
@@ -124,12 +136,12 @@ export function chooseSeekerMove(state, who, rng = Math.random, params = SEEKER)
       params.gammaPath * Math.log(c.count)
     );
   });
-  const { item, probs } = softmaxSample(cands, scores, params.temperature, rng);
+  const { item, probs } = pickWithEpsilon(cands, scores, params.temperature, params.epsilon, rng);
   return { path: item.path, end: item.end, focal, probs };
 }
 
 // ---- 王様AI -----------------------------------------------------------------
-export const KING = { radius: 4, temperature: 0.5, focalBonus: 2.0 };
+export const KING = { radius: 4, temperature: 0.5, focalBonus: 2.0, epsilon: 0 };
 
 // 王様の焦点: 両盤面の真の交差（＝シーカーが目指す合流点）。無ければ盤中央。
 function kingFocal(state) {
@@ -142,13 +154,25 @@ export function chooseKingDebris(state, who, rng = Math.random, params = KING) {
   const size = state.size;
   const focal = kingFocal(state);
   const seeker = state[who];
+  const steps = state.stepsPerMove;
+  const startIdx = seeker.pos.y * size + seeker.pos.x;
 
-  const distToFocal = (c) => manhattan(c, focal);
+  // 到達端点(index配列)から焦点への最短距離を返す高速版
+  const grid = buildBlockedGrid(state, who); // デブリのみ進入不可
+  const minDistFocal = (ends) => {
+    let m = Infinity;
+    for (let i = 0; i < ends.length; i++) {
+      const idx = ends[i];
+      const x = idx % size;
+      const d = Math.abs(x - focal.x) + Math.abs((idx - x) / size - focal.y);
+      if (d < m) m = d;
+    }
+    return m;
+  };
+
   // 妨害しない場合にシーカーが焦点へ最接近できる距離（基準値）
-  const baseEnds = reachableEndSet(state, who);
-  let base = Infinity;
-  for (const k of baseEnds) base = Math.min(base, distToFocal(parseKey(k)));
-  if (!Number.isFinite(base)) base = distToFocal(seeker.pos); // 既に詰み気味
+  let base = minDistFocal(reachEndsGrid(size, steps, startIdx, grid));
+  if (!Number.isFinite(base)) base = manhattan(seeker.pos, focal); // 既に詰み気味
 
   const placeable = (x, y) => {
     if (x < 0 || y < 0 || x >= size || y >= size) return false;
@@ -170,17 +194,19 @@ export function chooseKingDebris(state, who, rng = Math.random, params = KING) {
   }
   if (cands.length === 0) return null; // 盤面が埋まっている（実質起こらない）
 
+  const distToFocal = (c) => manhattan(c, focal);
   const scores = cands.map((d) => {
-    // d をブロックした時にシーカーが焦点へ最接近できる距離
-    const ends = reachableEndSet(state, who, { blocked: new Set([key(d)]) });
-    let best = Infinity;
-    for (const k of ends) best = Math.min(best, distToFocal(parseKey(k)));
+    // d をブロックした時にシーカーが焦点へ最接近できる距離（gridを一時的に立てる）
+    const di = d.y * size + d.x;
+    grid[di] = 1;
+    let best = minDistFocal(reachEndsGrid(size, steps, startIdx, grid));
+    grid[di] = 0;
     if (!Number.isFinite(best)) best = base + size; // 完全に詰ませられるなら高評価
     const obstruction = best - base; // >0 なら接近を妨げている
     const nearFocal = params.focalBonus / (1 + distToFocal(d)); // 合流点周辺を固める
     return obstruction + nearFocal;
   });
 
-  const { item } = softmaxSample(cands, scores, params.temperature, rng);
+  const { item } = pickWithEpsilon(cands, scores, params.temperature, params.epsilon, rng);
   return item;
 }

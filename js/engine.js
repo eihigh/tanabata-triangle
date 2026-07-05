@@ -170,10 +170,66 @@ export function enumerateMoves(state, who, opts = {}) {
   return results;
 }
 
-// 到達可能な着地マスの集合（"x,y" の Set）。opts.blocked は enumerateMoves と同じ。
+// ---- 高速到達判定（AI/シミュレータ用・文字列や経路配列を作らない）----------
+// 世代スタンプ式の訪問済みグリッド（層ごとに再利用、再帰・確保を避ける）。
+let _vis = null;
+let _visN = 0;
+let _gen = 0;
+function ensureVis(N) {
+  if (_visN !== N) {
+    _vis = new Int32Array(N * N);
+    _visN = N;
+    _gen = 0;
+  }
+}
+
+// blocked: Uint8Array(N*N)（1=進入不可）。startIdx から「ちょうど steps 手」で
+// 到達できるマスの index 配列を返す（重複なし、盤外/ブロックは除外、自マス折返し可）。
+export function reachEndsGrid(N, steps, startIdx, blocked) {
+  ensureVis(N);
+  let frontier = [startIdx];
+  for (let s = 0; s < steps; s++) {
+    _gen++;
+    const next = [];
+    for (let i = 0; i < frontier.length; i++) {
+      const c = frontier[i];
+      const cx = c % N;
+      const cy = (c - cx) / N;
+      let n;
+      if (cy > 0 && !blocked[(n = c - N)] && _vis[n] !== _gen) { _vis[n] = _gen; next.push(n); }
+      if (cy < N - 1 && !blocked[(n = c + N)] && _vis[n] !== _gen) { _vis[n] = _gen; next.push(n); }
+      if (cx > 0 && !blocked[(n = c - 1)] && _vis[n] !== _gen) { _vis[n] = _gen; next.push(n); }
+      if (cx < N - 1 && !blocked[(n = c + 1)] && _vis[n] !== _gen) { _vis[n] = _gen; next.push(n); }
+    }
+    frontier = next;
+  }
+  return frontier;
+}
+
+// who の盤面のデブリから進入不可グリッド(Uint8Array)を作る（軌跡は進入可なので含めない）。
+export function buildBlockedGrid(state, who) {
+  const N = state.size;
+  const g = new Uint8Array(N * N);
+  for (const k of state[who].debris) {
+    const c = parseKey(k);
+    g[c.y * N + c.x] = 1;
+  }
+  return g;
+}
+
+// 到達可能な着地マスの集合（"x,y" の Set）。opts.blocked は追加ブロックの Set。
 export function reachableEndSet(state, who, opts = {}) {
+  const N = state.size;
+  const g = buildBlockedGrid(state, who);
+  if (opts.blocked) for (const k of opts.blocked) {
+    const c = parseKey(k);
+    g[c.y * N + c.x] = 1;
+  }
+  const start = state[who].pos.y * N + state[who].pos.x;
   const set = new Set();
-  for (const m of enumerateMoves(state, who, opts)) set.add(key(m.end));
+  for (const idx of reachEndsGrid(N, state.stepsPerMove, start, g)) {
+    set.add(`${idx % N},${(idx - (idx % N)) / N}`);
+  }
   return set;
 }
 
