@@ -1,6 +1,6 @@
 // engine 単体テスト（Node で実行: `node tests/engine.test.mjs`）
 import {
-  createGame,
+  createGame as _createGame,
   hints,
   canPlaceDebris,
   placeDebris,
@@ -18,6 +18,11 @@ import {
   DIRS,
   PHASE,
 } from '../js/engine.js';
+
+// 既定は「確定設定(7x7 / d4・d6 / king)」に変わったため、従来の 9x9・固定3・全公開を
+// 前提にしたテストが崩れないよう、明示指定が無い項目はクラシック設定を被せる。
+const CLASSIC = { BOARD_SIZE: 9, STEPS: {}, PUBLIC_ROLLS: 'all' };
+const createGame = (cfg = {}) => _createGame({ ...CLASSIC, ...cfg });
 
 let passed = 0;
 let failed = 0;
@@ -196,6 +201,27 @@ function throws(fn, msg) {
   applyMove(g, 'hikoboshi', ['up', 'up', 'up']);
   ok(movesSoFar(g, 'orihime') === 1 && movesSoFar(g, 'hikoboshi') === 1, 'round2 KD_O: both 1 move');
   ok(g.starts.orihime.x === 0 && g.starts.hikoboshi.x === 8, 'public starts recorded');
+}
+
+// --- 初日のみ王様が2個置けるルール（FIRST_ROUND_DEBRIS）----------------------
+{
+  const g = createGame({ FIRST_ROUND_DEBRIS: 2 });
+  // ラウンド1: 織姫盤に1個置いてもまだデブリフェーズ、2個目で移動フェーズへ
+  ok(g.phase === PHASE.KING_DEBRIS_ORIHIME, 'round1 starts in king-debris');
+  placeDebris(g, 'orihime', { x: 5, y: 0 });
+  ok(g.phase === PHASE.KING_DEBRIS_ORIHIME, 'round1: still debris after 1st (allowance 2)');
+  placeDebris(g, 'orihime', { x: 6, y: 0 });
+  ok(g.phase === PHASE.MOVE_ORIHIME, 'round1: move phase after 2nd debris');
+  ok(g.orihime.debris.has('5,0') && g.orihime.debris.has('6,0'), 'both round1 debris placed');
+  applyMove(g, 'orihime', ['down', 'down', 'down']);
+  placeDebris(g, 'hikoboshi', { x: 0, y: 5 });
+  ok(g.phase === PHASE.KING_DEBRIS_HIKOBOSHI, 'round1 hikoboshi also gets 2');
+  placeDebris(g, 'hikoboshi', { x: 0, y: 6 });
+  applyMove(g, 'hikoboshi', ['up', 'up', 'up']);
+  // ラウンド2以降は1個で移動フェーズへ
+  ok(g.round === 2 && g.phase === PHASE.KING_DEBRIS_ORIHIME, 'advanced to round2');
+  placeDebris(g, 'orihime', { x: 4, y: 3 });
+  ok(g.phase === PHASE.MOVE_ORIHIME, 'round2: move phase after just 1 debris');
 }
 
 // --- ダイス移動: parseStepSpec / rollStep -----------------------------------

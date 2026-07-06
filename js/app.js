@@ -15,8 +15,8 @@ import {
   eq,
   DIRS,
   PHASE,
-} from './engine.js';
-import { drawBoard, COLORS } from './render.js';
+} from './engine.js?v=7';
+import { drawBoard, COLORS } from './render.js?v=7';
 import { chooseSeekerMove, chooseKingDebris } from './ai.js';
 
 const SEEKER_LABEL = { orihime: '織姫', hikoboshi: '彦星' };
@@ -45,6 +45,10 @@ const ui = {
   overlayTitle: el('overlay-title'),
   overlayText: el('overlay-text'),
   overlayBtn: el('overlay-btn'),
+  resultBanner: el('result-banner'),
+  rbTitle: el('rb-title'),
+  rbText: el('rb-text'),
+  rbBtn: el('rb-btn'),
   setup: el('setup'),
   setupNote: el('setup-note'),
   thinking: el('thinking'),
@@ -53,8 +57,9 @@ const ui = {
 
 // 役の担当: 'human' | 'ai'
 let roles = { orihime: 'human', hikoboshi: 'ai', king: 'ai' };
-// バリアント設定（開始画面で選択）。move は '2'|'3'|'d4'|'d6'。
-let variant = { boardSize: 9, orihime: '3', hikoboshi: '3' };
+// バリアント設定（開始画面で選択）。move は '2'|'3'|'d4'|'d6'。publicRolls は 'all'|'king'|'none'。
+// 確定版の既定: 7×7 ・ 織姫1d4/彦星1d6 ・ 出目は王様のみ公開(king)。
+let variant = { boardSize: 7, orihime: 'd4', hikoboshi: 'd6', publicRolls: 'king' };
 
 let state;
 let path; // 移動入力中の {x,y} 配列（先頭=現在位置）
@@ -72,11 +77,13 @@ function start() {
   state = createGame({
     BOARD_SIZE: variant.boardSize,
     STEPS: { orihime: variant.orihime, hikoboshi: variant.hikoboshi },
+    PUBLIC_ROLLS: variant.publicRolls,
     rng: Math.random,
   });
   path = null;
   debrisPick = null;
   ui.overlay.classList.add('hidden');
+  ui.resultBanner.classList.add('hidden');
   ui.setup.classList.add('hidden');
   ui.thinking.classList.add('hidden');
   ui.handoff.classList.add('hidden');
@@ -231,7 +238,7 @@ function updateHeader() {
     const tag = diceTag(who);
     ui.status.textContent =
       `${SEEKER_LABEL[who]}(今回${state[who].steps}マス${tag})の盤面にデブリを1個置いて邪魔しよう` +
-      '（光る盤・軌跡の無いマス）';
+      '（軌跡と相手のコマが無いマス）';
   } else {
     ui.roleBadge.textContent = SEEKER_LABEL[who];
     ui.roleBadge.style.background = COLORS[who].piece;
@@ -405,18 +412,45 @@ function showResult() {
   ui.handoff.classList.add('hidden');
   ui.thinking.classList.add('hidden');
   hideControls();
+  ui.status.textContent = ''; // 移動ステータスを消してリザルトと重ならないように
   const seekersWin = state.winner === 'seekers';
-  ui.overlayTitle.textContent = seekersWin ? '🎋 シーカーの勝ち！' : '👑 王様の勝ち！';
-  ui.overlayText.textContent = seekersWin
-    ? `織姫と彦星は (${state.meetingCell.x}, ${state.meetingCell.y}) で出会えた！`
-    : '規定手番までに二人は出会えなかった…';
-  ui.overlay.classList.remove('hidden');
-  ui.overlayBtn.onclick = showSetup;
+  // 勝敗どちらでも両盤（軌跡・デブリ・両者の最終位置）を公開する。王様ビューを流用。
+  revealBothBoards();
+  ui.rbTitle.textContent = seekersWin ? '🎋 シーカーの勝ち！' : '👑 王様の勝ち！';
+  if (seekersWin) {
+    const m = state.meetingCell;
+    ui.rbText.innerHTML =
+      `織姫と彦星は (${m.x}, ${m.y}) で出会えた！　` +
+      '<span class="reveal-note">二人の軌跡は下の盤面のとおり</span>';
+  } else {
+    const o = state.orihime.pos;
+    const h = state.hikoboshi.pos;
+    ui.rbText.innerHTML =
+      '規定手番までに二人は出会えなかった…　' +
+      `<span class="reveal-note">実は織姫 (${o.x}, ${o.y})・彦星 (${h.x}, ${h.y}) にいました（下の盤面）</span>`;
+  }
+  ui.resultBanner.classList.remove('hidden');
+  ui.rbBtn.onclick = showSetup;
+}
+
+// 両盤を公開表示（軌跡・デブリ・両者の最終位置）。王様のデブリ配置ビューを流用。
+function revealBothBoards() {
+  ui.canvas.onclick = null;
+  ui.canvas2.onclick = null;
+  ui.boards.classList.add('king');
+  clearBoardGlow();
+  drawBoard(ui.canvas, state, { who: 'orihime', reveal: true });
+  drawBoard(ui.canvas2, state, { who: 'hikoboshi', reveal: true });
+  const o = state.orihime.pos;
+  const h = state.hikoboshi.pos;
+  el('board-label').textContent = `織姫の盤面 — 最終位置 (${o.x}, ${o.y})`;
+  el('board2-label').textContent = `彦星の盤面 — 最終位置 (${h.x}, ${h.y})`;
 }
 
 // ---- 役選択（開始前）-------------------------------------------------------
 function showSetup() {
   ui.overlay.classList.add('hidden');
+  ui.resultBanner.classList.add('hidden');
   ui.handoff.classList.add('hidden');
   ui.thinking.classList.add('hidden');
   hideControls();

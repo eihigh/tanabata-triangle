@@ -86,6 +86,12 @@ export function drawBoard(canvas, state, opts = {}) {
   else if (reveal) drawPiece(ctx, oriPos, cell, 'orihime', true);
   if (who === 'hikoboshi') drawPiece(ctx, hikPos, cell, 'hikoboshi');
   else if (reveal) drawPiece(ctx, hikPos, cell, 'hikoboshi', true);
+
+  // 駒がヒント(★)の上に乗っていると駒が★を隠してしまう。動かなくても「ここはヒントでもある」と
+  // 分かるよう、駒の上に小さな★バッジを重ねる。対象はこの盤の“実駒”のみ。半透明ゴースト（相手駒）は
+  // 下の★が透けて見えるためバッジ不要（付けると素の★と二重に見える）。
+  const ownPos = who === 'orihime' ? oriPos : hikPos;
+  if (hintSet.has(key(ownPos))) drawHintBadge(ctx, ownPos, cell);
 }
 
 function fillCell(ctx, c, cell) {
@@ -112,9 +118,12 @@ function drawDebris(ctx, c, cell) {
 }
 
 function drawStar(ctx, c, cell) {
-  const cx = center(c.x, cell);
-  const cy = center(c.y, cell);
-  const R = cell * 0.28;
+  starPath(ctx, center(c.x, cell), center(c.y, cell), cell * 0.28);
+  ctx.fill();
+}
+
+// 星形のパスを組む（塗り/線は呼び出し側で）。
+function starPath(ctx, cx, cy, R) {
   const r = R * 0.45;
   ctx.beginPath();
   for (let i = 0; i < 10; i++) {
@@ -125,7 +134,20 @@ function drawStar(ctx, c, cell) {
     i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
   }
   ctx.closePath();
+}
+
+// 駒に重なったヒントの目印。セル右上に小さな★を、駒の上から見えるよう縁取りして描く。
+function drawHintBadge(ctx, c, cell) {
+  const bx = c.x * cell + cell * 0.76;
+  const by = c.y * cell + cell * 0.24;
+  ctx.save();
+  starPath(ctx, bx, by, cell * 0.17);
+  ctx.fillStyle = COLORS.hint;
   ctx.fill();
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+  ctx.stroke();
+  ctx.restore();
 }
 
 // ghost=true のとき、その盤面には本来存在しない相手駒を半透明＋破線リングで描く

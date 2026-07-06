@@ -113,12 +113,13 @@ export function buildOpponentBelief(state, who, params = BELIEF) {
   const my = state[who];
   const spec = state[other].stepSpec;
   // 到達 budget とパリティ制約の使い分け:
-  // - 公開 or 固定: 相手の累積歩数 traveled は既知 → 「L1 ≤ traveled かつ (traveled-L1) 偶数」の硬い制約。
-  // - 非公開ダイス: 出目は本人のみ → 手番数 k と最大目 faces から上界 k*faces のみ（パリティは不定）。
+  // - 相手の出目を知る（全公開）or 固定: 累積歩数 traveled は既知 → 「L1 ≤ traveled かつ (traveled-L1) 偶数」の硬い制約。
+  // - 相手の出目を知らない（king/none）ダイス: 手番数 k と最大目 faces から上界 k*faces のみ（パリティは不定）。
+  const seekerKnowsRolls = (state.rollVisibility ?? 'all') === 'all';
   let budget;
   let useParity;
   let advBudget; // 前進事前分布に使う期待進行量
-  if (state.publicRolls === false && spec.kind === 'dice') {
+  if (!seekerKnowsRolls && spec.kind === 'dice') {
     const k = movesSoFar(state, other);
     budget = k * spec.faces;
     useParity = false;
@@ -135,6 +136,7 @@ export function buildOpponentBelief(state, who, params = BELIEF) {
   const b = new Float64Array(N * N);
   const twoSa = 2 * params.sigmaAdvance * params.sigmaAdvance;
   const twoSh = 2 * params.sigmaHint * params.sigmaHint;
+  const common = state.commonDebris; // 共通知識: 初期中央デブリ（相手も同配置＝そこには停止できない）
   let tot = 0;
   for (let y = 0; y < N; y++) {
     for (let x = 0; x < N; x++) {
@@ -144,6 +146,8 @@ export function buildOpponentBelief(state, who, params = BELIEF) {
       // 2. 負の情報: 自分の軌跡のうちヒントに無いマスに相手は「今」いない
       const kk = `${x},${y}`;
       if (my.trail.has(kk) && !my.revealedHints.has(kk)) continue;
+      // 2b. 共通知識: 初期中央デブリ上に相手は停止できない（両盤同一配置＝正当な公開情報）
+      if (common && common.has(kk)) continue;
       // 3+4. 前進事前 ＋ ヒントの山
       const de = Math.abs(x - expPos.x) + Math.abs(y - expPos.y);
       let w = Math.exp(-(de * de) / twoSa) + 1e-4;
@@ -253,6 +257,9 @@ export const KING = {
   wObstruct: 4.0, // 接近妨害（相手位置への最接近距離の悪化量）
   adjacentBonus: 4.0, // 相手位置の隣接マス（着地急所）
   corridorBonus: 3.0, // 二人の中点付近（回廊封鎖）
+  rendezvousBonus: 10.0, // 予測合流点(先読み)への設置ボーナス。初日に最も強く、ラウンドで減衰
+  rendezvousSigma: 2.0, // 予測合流点まわりの効き幅（マンハッタン）
+  rendezvousMaxRound: 2, // 先読みを効かせる最終ラウンド（これ以降は 0）。Infinity で全ラウンド
   temperature: 0.2,
   epsilon: 0,
 };
@@ -269,14 +276,26 @@ export function chooseKingDebris(state, who, rng = Math.random, params = KING) {
   const mid = { x: Math.round((mover.pos.x + p.x) / 2), y: Math.round((mover.pos.y + p.y) / 2) };
   const farDist = manhattan(mover.pos, p);
 
+  // 予測合流点 R（先読み）: 両者が互いへ向かうと、移動が速いほど遠くまで詰めるので
+  // 合流点は「相手の速度でセグメントを内分」した位置になる（遅い側寄り）。手番に依らず
+  // 実位置と期待歩数から幾何的に求める。序盤に中央付近を先取りして塞ぐのに使う。
+  const es = (sp) => (sp.kind === 'dice' ? (1 + sp.faces) / 2 : sp.n);
+  const O = state.orihime.pos;
+  const H = state.hikoboshi.pos;
+  const vO = es(state.orihime.stepSpec);
+  const vH = es(state.hikoboshi.stepSpec);
+  const fO = vO / (vO + vH); // 織姫→彦星方向へ織姫が詰める割合
+  const rz = { x: Math.round(O.x + (H.x - O.x) * fO), y: Math.round(O.y + (H.y - O.y) * fO) };
+
   const grid = buildBlockedGrid(state, who); // この盤のデブリのみ進入不可
 
   // 王様が想定する今手番の出目リスト（重み付き）。
-  // - 公開 or 固定: 実際の出目 mover.steps のみ（従来どおり）。
-  // - 非公開ダイス: 出目を知らないので 1..faces を一様に想定して分布で守る。
+  // - 王様が出目を知る（全公開 or king）or 固定: 実際の出目 mover.steps のみ（従来どおり）。
+  // - 王様が出目を知らない（none）ダイス: 1..faces を一様に想定して分布で守る。
   const spec = mover.stepSpec;
+  const kingKnowsRolls = (state.rollVisibility ?? 'all') !== 'none';
   const rolls =
-    state.publicRolls === false && spec.kind === 'dice'
+    !kingKnowsRolls && spec.kind === 'dice'
       ? Array.from({ length: spec.faces }, (_, i) => ({ s: i + 1, w: 1 / spec.faces }))
       : [{ s: mover.steps, w: 1 }];
 
@@ -320,6 +339,9 @@ export function chooseKingDebris(state, who, rng = Math.random, params = KING) {
   addCand(p.x, p.y - 1);
   for (let y = mid.y - 2; y <= mid.y + 2; y++)
     for (let x = mid.x - 2; x <= mid.x + 2; x++) addCand(x, y);
+  // 予測合流点まわり（先読みで中央付近を候補に含める。序盤に自駒が隅でも中央を塞げる）
+  for (let y = rz.y - 2; y <= rz.y + 2; y++)
+    for (let x = rz.x - 2; x <= rz.x + 2; x++) addCand(x, y);
   // 空きが無ければ盤面全体（終盤の保険）
   if (candSet.size === 0) {
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) addCand(x, y);
@@ -337,6 +359,11 @@ export function chooseKingDebris(state, who, rng = Math.random, params = KING) {
     score -= params.threatPenalty * r.threatProb; // 着地合流の残存確率で連続減点
     if (manhattan(d, p) === 1) score += params.adjacentBonus; // 着地急所
     score += params.corridorBonus * Math.exp(-manhattan(d, mid) / 2); // 回廊封鎖
+    // 先読み: 予測合流点に近いほど加点。既定は序盤（最初の1〜2デブリ＝ラウンド1〜2）のみ効かせ、
+    // round=1 で最大・round=2 で半減・以降は 0（rendezvousMaxRound で範囲を変えられる）。序盤は自駒が
+    // まだ遠く this-turn の遮断(wObstruct/threat)がほぼ効かないため、「合流するであろう中央付近」を先に固める。
+    const rzW = state.round <= params.rendezvousMaxRound ? params.rendezvousBonus / state.round : 0;
+    score += rzW * Math.exp(-manhattan(d, rz) / params.rendezvousSigma);
     return score;
   });
 

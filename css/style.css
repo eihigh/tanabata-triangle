@@ -114,18 +114,28 @@ canvas {
   padding: 4px;
   transition: box-shadow 0.2s, background 0.2s;
 }
+
 .board-wrap.glow-target {
   background: rgba(122, 92, 255, 0.12);
   box-shadow: 0 0 0 2px var(--accent), 0 0 18px 3px rgba(122, 92, 255, 0.75);
   animation: target-pulse 1.4s ease-in-out infinite;
 }
+
 .board-wrap.glow-target figcaption {
   color: #b9a9ff;
   font-weight: 700;
 }
+
 @keyframes target-pulse {
-  0%, 100% { box-shadow: 0 0 0 2px var(--accent), 0 0 14px 2px rgba(122, 92, 255, 0.55); }
-  50% { box-shadow: 0 0 0 2px var(--accent), 0 0 22px 5px rgba(122, 92, 255, 0.9); }
+
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px var(--accent), 0 0 14px 2px rgba(122, 92, 255, 0.55);
+  }
+
+  50% {
+    box-shadow: 0 0 0 2px var(--accent), 0 0 22px 5px rgba(122, 92, 255, 0.9);
+  }
 }
 
 figcaption {
@@ -260,37 +270,74 @@ button:disabled {
   font-size: 0.9rem;
 }
 
+/* 勝敗リザルト: 盤面の上に素直に積む帯（浮かせず通常フロー） */
+.result-banner {
+  text-align: center;
+  margin: 8px auto 14px;
+  padding: 14px 24px;
+  max-width: 620px;
+  background: var(--panel);
+  border: 1px solid #38416a;
+  border-radius: 14px;
+}
+
+.result-banner.hidden {
+  display: none;
+}
+
+.result-banner h2 {
+  font-size: 1.5rem;
+  margin: 0 0 6px;
+}
+
+.result-banner p {
+  font-size: 1.05rem;
+  margin: 0 0 12px;
+  color: var(--text);
+}
+
+.reveal-note {
+  color: var(--accent);
+  font-weight: 700;
+}
+
 /* 役選択 */
 .setup-card {
   max-width: 420px;
 }
+
 .setup-lead {
   font-size: 1rem !important;
   color: var(--muted);
   margin-bottom: 20px !important;
 }
+
 .role-picker {
   display: flex;
   flex-direction: column;
   gap: 12px;
   margin-bottom: 18px;
 }
+
 .role-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 14px;
 }
+
 .role-name {
   font-size: 1.1rem;
   font-weight: 700;
 }
+
 .seg {
   display: inline-flex;
   border: 1px solid #38416a;
   border-radius: 10px;
   overflow: hidden;
 }
+
 .seg button {
   border: none;
   background: transparent;
@@ -299,16 +346,25 @@ button:disabled {
   font-size: 0.95rem;
   font-weight: 700;
   cursor: pointer;
+  white-space: nowrap;
   transition: background 0.15s, color 0.15s;
 }
+
 .seg button.active {
   background: var(--accent);
   color: #fff;
 }
+
 .seg-4 button {
   padding: 9px 12px;
   font-size: 0.85rem;
 }
+
+.seg-3 button {
+  padding: 9px 14px;
+  font-size: 0.85rem;
+}
+
 .setup-sub {
   font-size: 0.8rem !important;
   color: var(--muted);
@@ -329,10 +385,19 @@ button:disabled {
 .veil-icon.spin {
   animation: spin 1.2s ease-in-out infinite;
 }
+
 @keyframes spin {
-  0% { transform: rotate(0deg); }
-  50% { transform: rotate(180deg); }
-  100% { transform: rotate(360deg); }
+  0% {
+    transform: rotate(0deg);
+  }
+
+  50% {
+    transform: rotate(180deg);
+  }
+
+  100% {
+    transform: rotate(360deg);
+  }
 }
 
 .hidden {
@@ -344,10 +409,12 @@ button:disabled {
     flex-direction: column;
     align-items: center;
   }
+
   #boards.king .board-wrap {
     max-width: 100%;
     width: 100%;
   }
+
   .dir {
     width: 54px;
     height: 54px;

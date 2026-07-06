@@ -1,6 +1,6 @@
 // AI 単体テスト（Node で実行: `node tests/ai.test.mjs`）
 import {
-  createGame,
+  createGame as _createGame,
   placeDebris,
   applyMove,
   canPlaceDebris,
@@ -17,6 +17,11 @@ import {
   SEEKER,
   KING,
 } from '../js/ai.js';
+
+// 既定は「確定設定(7x7 / d4・d6 / king)」に変わったため、従来の 9x9・固定3・全公開を
+// 前提にしたテストが崩れないよう、明示指定が無い項目はクラシック設定を被せる。
+const CLASSIC = { BOARD_SIZE: 9, STEPS: {}, PUBLIC_ROLLS: 'all' };
+const createGame = (cfg = {}) => _createGame({ ...CLASSIC, ...cfg });
 
 let passed = 0;
 let failed = 0;
@@ -286,6 +291,54 @@ function ok(cond, msg) {
     else applyMove(g, who, chooseSeekerMove(g, who, rng).path);
   }
   ok(g.phase === PHASE.GAME_OVER, 'private-rolls all-AI game reaches game over');
+}
+
+// --- 王様のみ公開(king): シーカーの信念は非公開と同じくぼける ----------------
+{
+  // king モードでは相手シーカーは出目を知らない → belief は全公開より広がる（=非公開と同等）。
+  const pub = createGame({ STEPS: { hikoboshi: 'd6' }, rng: mulberry32(3) });
+  const king = createGame({ STEPS: { hikoboshi: 'd6' }, PUBLIC_ROLLS: 'king', rng: mulberry32(3) });
+  for (const g of [pub, king]) {
+    const rng = mulberry32(11);
+    placeDebris(g, 'orihime', chooseKingDebris(g, 'orihime', rng));
+    applyMove(g, 'orihime', chooseSeekerMove(g, 'orihime', rng).path);
+    placeDebris(g, 'hikoboshi', chooseKingDebris(g, 'hikoboshi', rng));
+    applyMove(g, 'hikoboshi', chooseSeekerMove(g, 'hikoboshi', rng).path);
+    placeDebris(g, 'orihime', chooseKingDebris(g, 'orihime', rng));
+  }
+  const nz = (b) => [...b].filter((v) => v > 0).length;
+  ok(king.rollVisibility === 'king' && king.publicRolls === false, 'king-only visibility flags');
+  ok(
+    nz(buildOpponentBelief(king, 'orihime')) > nz(buildOpponentBelief(pub, 'orihime')),
+    'king-only seeker belief is fuzzier than full-public',
+  );
+}
+
+// --- 王様のみ公開(king)でも全AIで決着する ------------------------------------
+{
+  const g = createGame({ STEPS: { orihime: 'd6', hikoboshi: 'd4' }, PUBLIC_ROLLS: 'king', rng: mulberry32(9) });
+  const rng = mulberry32(9);
+  let guard = 0;
+  while (g.phase !== PHASE.GAME_OVER && guard++ < 100) {
+    const who = g.phase.includes('ORIHIME') ? 'orihime' : 'hikoboshi';
+    if (g.phase.startsWith('KING_DEBRIS')) placeDebris(g, who, chooseKingDebris(g, who, rng));
+    else applyMove(g, who, chooseSeekerMove(g, who, rng).path);
+  }
+  ok(g.phase === PHASE.GAME_OVER, 'king-only all-AI game reaches game over');
+}
+
+// --- 共通知識: 初期中央デブリ上には相手が居ない（belief=0）--------------------
+{
+  const g = createGame({ INITIAL_CENTER_DEBRIS: 5, rng: mulberry32(4) });
+  const b = buildOpponentBelief(g, 'orihime');
+  const N = g.size;
+  ok(g.commonDebris.size === 5, 'commonDebris holds the 5-cell center cluster');
+  let allZero = true;
+  for (const k of g.commonDebris) {
+    const [x, y] = k.split(',').map(Number);
+    if (b[y * N + x] !== 0) allZero = false;
+  }
+  ok(allZero, 'belief assigns 0 to common center-debris cells');
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -11,11 +11,12 @@
 //   node tools/simulate.mjs [games=2000] [budgetMs=5000] [seed=12345]
 //                           [eps=0,0.1,...,1] [target=all|seekers|king]
 //                           [board=9] [oriSteps=3] [hikSteps=3] [combos=1]
+//                           [public=all|king|none]  # 出目の可視性（全公開/王様のみ/本人のみ）
 //   例:
 //     node tools/simulate.mjs board=7 oriSteps=2        # 7x7 かつ織姫だけ移動2
 //     node tools/simulate.mjs combos=1                  # 4バリアントをまとめて比較
 
-import { createGame, placeDebris, applyMove, resolveStuck, hasAnyLegalMove, PHASE, activeSeeker, isDebrisPhase } from '../js/engine.js';
+import { createGame, placeDebris, applyMove, resolveStuck, hasAnyLegalMove, PHASE, activeSeeker, isDebrisPhase, DEFAULTS } from '../js/engine.js';
 import { chooseSeekerMove, chooseKingDebris, mulberry32, SEEKER, KING } from '../js/ai.js';
 import { writeFileSync } from 'node:fs';
 
@@ -30,8 +31,13 @@ const GAMES = parseInt(args.games ?? '2000', 10);
 const BUDGET_MS = parseInt(args.budgetMs ?? '5000', 10);
 const SEED = parseInt(args.seed ?? '12345', 10);
 const TARGET = args.target ?? 'all'; // どの役に乱数を混入するか
-// 出目（累積歩数）を公開するか。public=0 で非公開（各自の出目は本人のみ）。
-const PUBLIC_ROLLS = !(args.public === '0' || args.public === 'false');
+// 出目（累積歩数）の可視性。public=0/none で本人のみ、public=king で王様のみ、既定=全公開。
+const PUBLIC_ROLLS =
+  args.public === 'king'
+    ? 'king'
+    : args.public === '0' || args.public === 'false' || args.public === 'none'
+      ? false
+      : true;
 const EPS_LIST = (args.eps ?? '0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0')
   .split(',')
   .map(Number);
@@ -41,6 +47,8 @@ const EPS_LIST = (args.eps ?? '0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0')
 function configFromArgs() {
   const c = {};
   if (args.board) c.BOARD_SIZE = parseInt(args.board, 10);
+  if (args.centerDebris != null) c.INITIAL_CENTER_DEBRIS = parseInt(args.centerDebris, 10);
+  if (args.firstRoundDebris != null) c.FIRST_ROUND_DEBRIS = parseInt(args.firstRoundDebris, 10);
   const steps = {};
   const ori = args.ori ?? args.oriSteps;
   const hik = args.hik ?? args.hikSteps;
@@ -50,15 +58,16 @@ function configFromArgs() {
   return c;
 }
 
-// combos モードで比較するバリアント（固定＋ダイス）
+// combos モードで比較するバリアント（固定＋ダイス）。
+// engine の DEFAULTS が確定設定(7x7/d4・d6)に変わったため、各バリアントは盤サイズ・移動量を明示する。
 const COMBOS = [
-  ['baseline (9x9, 織姫3/彦星3)', {}],
-  ['A       (9x9, 織姫2/彦星3)', { STEPS: { orihime: 2 } }],
-  ['B       (7x7, 織姫3/彦星3)', { BOARD_SIZE: 7 }],
+  ['baseline (9x9, 織姫3/彦星3)', { BOARD_SIZE: 9, STEPS: { orihime: 3, hikoboshi: 3 } }],
+  ['A       (9x9, 織姫2/彦星3)', { BOARD_SIZE: 9, STEPS: { orihime: 2 } }],
+  ['B       (7x7, 織姫3/彦星3)', { BOARD_SIZE: 7, STEPS: { orihime: 3, hikoboshi: 3 } }],
   ['A+B     (7x7, 織姫2/彦星3)', { BOARD_SIZE: 7, STEPS: { orihime: 2 } }],
-  ['D1      (9x9, 織姫1d6/彦星3)', { STEPS: { orihime: 'd6' } }],
-  ['D2      (9x9, 両者1d6)', { STEPS: { orihime: 'd6', hikoboshi: 'd6' } }],
-  ['D3      (9x9, 両者1d4)', { STEPS: { orihime: 'd4', hikoboshi: 'd4' } }],
+  ['D1      (9x9, 織姫1d6/彦星3)', { BOARD_SIZE: 9, STEPS: { orihime: 'd6' } }],
+  ['D2      (9x9, 両者1d6)', { BOARD_SIZE: 9, STEPS: { orihime: 'd6', hikoboshi: 'd6' } }],
+  ['D3      (9x9, 両者1d4)', { BOARD_SIZE: 9, STEPS: { orihime: 'd4', hikoboshi: 'd4' } }],
 ];
 
 // ---- 1ゲームのシミュレーション ---------------------------------------------
@@ -134,7 +143,7 @@ function runSweep(label, gameConfig, rng, csvRows) {
 // ---- 実行 -------------------------------------------------------------------
 const rng = mulberry32(SEED);
 console.log('七夕トライアングル シーカー勝率シミュレーション（全AI・モンテカルロ）');
-console.log(`  試行/設定=${GAMES}  タイムアウト/設定=${BUDGET_MS}ms  seed=${SEED}  乱数混入対象=${TARGET}  出目公開=${PUBLIC_ROLLS}`);
+console.log(`  試行/設定=${GAMES}  タイムアウト/設定=${BUDGET_MS}ms  seed=${SEED}  乱数混入対象=${TARGET}  出目公開=${PUBLIC_ROLLS === 'king' ? '王様のみ(king)' : PUBLIC_ROLLS ? '全公開(all)' : '非公開(none)'}`);
 console.log('  乱数混入率 epsilon: 0=AI本来の分布, 1=完全ランダム');
 
 // ---- matrix モード: seekerEps × kingEps の 3×3 クリア率 ---------------------
@@ -173,9 +182,9 @@ if (args.matrix && args.matrix !== 'false') {
   for (const [label, cfg] of COMBOS) runSweep(label, cfg, rng, csvRows);
 } else {
   const cfg = configFromArgs();
-  const size = cfg.BOARD_SIZE ?? 9;
-  const ori = cfg.STEPS?.orihime ?? 3;
-  const hik = cfg.STEPS?.hikoboshi ?? 3;
+  const size = cfg.BOARD_SIZE ?? DEFAULTS.BOARD_SIZE;
+  const ori = cfg.STEPS?.orihime ?? DEFAULTS.STEPS.orihime;
+  const hik = cfg.STEPS?.hikoboshi ?? DEFAULTS.STEPS.hikoboshi;
   runSweep(`${size}x${size}, 織姫${ori}/彦星${hik}`, cfg, rng, csvRows);
 }
 if (csvRows.length) {

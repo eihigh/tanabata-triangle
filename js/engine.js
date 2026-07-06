@@ -3,16 +3,44 @@
 // 共有座標グリッド上に織姫・彦星の2駒が存在する。各シーカーは自分の軌跡・自分の
 // デブリ・交差ヒントだけを見る別ビューを持ち、王様は両盤面を常に見られる。
 
-// ---- 調整可能な定数（プロトタイプの既定値）----------------------------------
+// ---- 調整可能な定数（既定＝ゲーム開始画面の確定設定に一致）------------------
 export const DEFAULTS = {
-  BOARD_SIZE: 9, // 9x9（座標 0..8）
-  STEPS_PER_MOVE: 3, // 1手でちょうど何マス動くか（両シーカー共通の既定）
+  BOARD_SIZE: 7, // 7x7（座標 0..6）
+  STEPS_PER_MOVE: 3, // STEPS 未指定シーカーのフォールバック移動量（固定）
+  // 既定の移動量（開始画面の確定設定: 織姫=1d4 / 彦星=1d6）。
+  // 数値 or 'd4'/'d6'。省略時は STEPS_PER_MOVE にフォールバック。
+  STEPS: { orihime: 'd4', hikoboshi: 'd6' },
+  // 出目の公開範囲（確定設定: 王様のみ）。'all' | 'king' | 'none'。
+  PUBLIC_ROLLS: 'king',
   MAX_ROUNDS: 7, // 各シーカーが7回移動
   DEBRIS_PER_TURN: 1, // 移動前に王様が置くデブリ数
-  // START / STEPS を省略すると、開始位置は盤の対角コーナー、移動量は STEPS_PER_MOVE。
-  // STEPS: { orihime, hikoboshi } で片方だけ移動量を変えるバリアントも作れる。
-  INITIAL_CENTER_DEBRIS: true, // 初期状態で両盤の中央にデブリを1個置く
+  // 初日（ラウンド1）のみ各デブリフェーズで置ける個数。未指定なら DEBRIS_PER_TURN と同じ。
+  // 2 にすると「初日のみ王様が2個置ける（＝中央1固定＋初期デブリ2を自由配置できる）」ルール。
+  FIRST_ROUND_DEBRIS: null,
+  // START を省略すると開始位置は盤の対角コーナー。STEPS: { orihime, hikoboshi } で移動量を上書き。
+  // 初期状態で両盤の中央付近に置くデブリ。true→1個、数値→その個数を中心に固めて配置、
+  // false/0→無し（両盤で同一配置なのでシーカー二人にとって共通知識）。
+  INITIAL_CENTER_DEBRIS: true,
 };
+
+// 中心から近い順（マンハッタン距離→固定タイブレーク）に count マスのクラスタ座標を返す。
+// 1=中心, 3=中心＋左右, 5=十字（中心＋上下左右）…と中心に固まって広がる。
+export function centerClusterCells(size, count) {
+  const c = { x: Math.floor(size / 2), y: Math.floor(size / 2) };
+  const order = [
+    { x: 0, y: 0 }, // 中心
+    { x: 1, y: 0 }, { x: -1, y: 0 }, // 左右
+    { x: 0, y: 1 }, { x: 0, y: -1 }, // 上下（→十字で5個）
+    { x: 1, y: 1 }, { x: -1, y: 1 }, { x: 1, y: -1 }, { x: -1, y: -1 }, // 角
+  ];
+  const cells = [];
+  for (const o of order) {
+    if (cells.length >= count) break;
+    const p = { x: c.x + o.x, y: c.y + o.y };
+    if (p.x >= 0 && p.y >= 0 && p.x < size && p.y < size) cells.push(p);
+  }
+  return cells;
+}
 
 // フェーズ
 export const PHASE = {
@@ -53,6 +81,19 @@ export function parseStepSpec(v, fallback) {
 }
 // このスペックで取りうる最大歩数（候補生成の上限などに使用）。
 export const maxStep = (spec) => (spec.kind === 'dice' ? spec.faces : spec.n);
+
+// ---- 出目の可視性スペック ---------------------------------------------------
+// 'all'  … 王様も相手シーカーも出目を知る（既定）
+// 'king' … 王様だけが出目を知る（相手シーカーは知らない）
+// 'none' … 出目は本人のみ（王様も相手シーカーも知らない）
+// 後方互換: PUBLIC_ROLLS が true→'all' / false→'none' / 未指定→'all'。
+export function normalizeRollVisibility(v) {
+  if (v == null || v === true) return 'all';
+  if (v === false) return 'none';
+  const s = String(v).trim().toLowerCase();
+  if (s === 'all' || s === 'king' || s === 'none') return s;
+  throw new Error(`normalizeRollVisibility: bad value ${v}`);
+}
 // 1手の歩数を決める。固定は rng 不使用（決定的）、ダイスは 1..faces を一様に。
 export function rollStep(spec, rng) {
   return spec.kind === 'dice' ? 1 + Math.floor(rng() * spec.faces) : spec.n;
@@ -73,14 +114,23 @@ export function createGame(config = {}) {
     orihime: { x: 0, y: 0 },
     hikoboshi: { x: size - 1, y: size - 1 },
   };
-  // 移動量スペック: 指定が無ければ両者 STEPS_PER_MOVE（固定）。ダイスや片側変更に対応。
-  const stepsCfg = config.STEPS || {};
+  // 移動量スペック: 指定が無ければ DEFAULTS.STEPS（確定設定の d4/d6）、それも無ければ STEPS_PER_MOVE。
+  // config.STEPS は「盤全体を丸ごと上書き」なので、片側だけ指定した場合の他方は STEPS_PER_MOVE に戻る。
+  const stepsCfg = cfg.STEPS || {};
   const specFor = (who) => parseStepSpec(stepsCfg[who], cfg.STEPS_PER_MOVE);
-  // 初期中央デブリ（開始マス上には置けないので、開始マスと重ならない盤にのみ置く）
-  const center = { x: Math.floor(size / 2), y: Math.floor(size / 2) };
+  // 初期中央デブリ（中心に固めて配置。開始マス上には置けないので、その盤では該当マスを除く）
+  const centerCount =
+    cfg.INITIAL_CENTER_DEBRIS === true ? 1 : Math.max(0, Number(cfg.INITIAL_CENTER_DEBRIS) || 0);
+  const centerCells = centerClusterCells(size, centerCount);
+  // 共通知識: 初期中央デブリは両盤に同一配置（配置規則・個数は公開）なので、
+  // 「相手はそのマスに停止できない」という事実をシーカー双方が知る。信念分布の除外に使う。
+  const commonDebris = new Set();
+  for (const cell of centerCells) {
+    if (!eq(cell, start.orihime) && !eq(cell, start.hikoboshi)) commonDebris.add(key(cell));
+  }
   const mkSeeker = (pos, spec) => {
     const debris = new Set();
-    if (cfg.INITIAL_CENTER_DEBRIS && !eq(pos, center)) debris.add(key(center));
+    for (const cell of centerCells) if (!eq(pos, cell)) debris.add(key(cell));
     return {
       pos: { ...pos },
       stepSpec: spec, // 移動量スペック（固定/ダイス）
@@ -94,9 +144,12 @@ export function createGame(config = {}) {
   return {
     size,
     rng, // ダイス用の乱数源（既定 Math.random、テスト/シミュは差し替え可）
-    // 出目（＝累積歩数）を公開するか。true(既定)=王様も相手シーカーも知る。
-    // false=各自の出目は本人のみ（AIは相手の traveled を使わず分布で推論する）。
-    publicRolls: config.PUBLIC_ROLLS !== false,
+    // 出目（＝累積歩数）の可視性。既定 'king'（王様のみ公開）。'all'=王様も相手シーカーも知る、
+    // 'king'=王様だけが知る、'none'=本人のみ。AIは知らない側では相手の traveled を
+    // 使わず分布で推論する。
+    rollVisibility: normalizeRollVisibility(cfg.PUBLIC_ROLLS),
+    // 後方互換: 出目が全公開かどうかの真偽値。
+    publicRolls: normalizeRollVisibility(cfg.PUBLIC_ROLLS) === 'all',
     stepsPerMove: cfg.STEPS_PER_MOVE, // 既定移動量（表示・参照用）
     // 開始位置は公開のゲーム設定（隠し情報ではない）。シーカーAIが相手の
     // 到達可能範囲を推論するために参照してよい。
@@ -104,8 +157,13 @@ export function createGame(config = {}) {
       orihime: { ...start.orihime },
       hikoboshi: { ...start.hikoboshi },
     },
+    // 共通知識の初期中央デブリ（両盤同一）。シーカーAIは「相手はここに
+    // 停止できない」という正当な公開情報として信念分布から除外してよい。
+    commonDebris,
     maxRounds: cfg.MAX_ROUNDS,
     debrisPerTurn: cfg.DEBRIS_PER_TURN,
+    // 初日（ラウンド1）のデブリ許容数（未指定なら通常と同じ）。
+    firstRoundDebris: cfg.FIRST_ROUND_DEBRIS ?? cfg.DEBRIS_PER_TURN,
     round: 1,
     debrisPlaced: 0, // 現デブリフェーズで置いた個数
     phase: PHASE.KING_DEBRIS_ORIHIME,
@@ -141,6 +199,11 @@ export function canPlaceDebris(state, who, cell) {
   return true;
 }
 
+// 現在の手番で王様が置けるデブリ数（初日=ラウンド1のみ firstRoundDebris、以降は debrisPerTurn）。
+export function debrisAllowance(state) {
+  return state.round === 1 ? state.firstRoundDebris : state.debrisPerTurn;
+}
+
 export function placeDebris(state, who, cell) {
   if (state.phase !== debrisPhaseFor(who)) {
     throw new Error(`placeDebris: wrong phase ${state.phase} for ${who}`);
@@ -150,11 +213,11 @@ export function placeDebris(state, who, cell) {
   }
   state[who].debris.add(key(cell));
   state.debrisPlaced += 1;
-  if (state.debrisPlaced >= state.debrisPerTurn) {
+  if (state.debrisPlaced >= debrisAllowance(state)) {
     state.debrisPlaced = 0;
     state.phase = movePhaseFor(who);
-    // 「移動前」の唯一のヒント更新点。ここで凍結し、移動中・移動後は変えない。
-    state[who].revealedHints = hints(state);
+    // ヒントは手番開始（デブリフェーズ入り）で凍結済み。デブリ設置は軌跡を変えないので
+    // ここでは更新しない（配置中・移動中・移動後で同じヒントを見せる）。
   }
   return state;
 }
@@ -336,12 +399,14 @@ export function checkMeeting(state) {
 }
 
 // フェーズ遷移。MAX_ROUNDS 到達で王様勝ち。
-// 王様デブリフェーズに入る＝そのシーカーの手番開始なので、ここで出目を振る。
+// 王様デブリフェーズに入る＝そのシーカーの手番開始なので、ここで出目を振り、
+// 交差ヒントを凍結する（王様のデブリ配置中から、その手番に開示されるヒントが見える）。
 export function advancePhase(state) {
   switch (state.phase) {
     case PHASE.MOVE_ORIHIME:
       state.phase = PHASE.KING_DEBRIS_HIKOBOSHI;
       rollFor(state, 'hikoboshi');
+      state.hikoboshi.revealedHints = hints(state);
       break;
     case PHASE.MOVE_HIKOBOSHI:
       if (state.round >= state.maxRounds) {
@@ -351,6 +416,7 @@ export function advancePhase(state) {
         state.round += 1;
         state.phase = PHASE.KING_DEBRIS_ORIHIME;
         rollFor(state, 'orihime');
+        state.orihime.revealedHints = hints(state);
       }
       break;
     default:
