@@ -108,6 +108,26 @@ canvas {
   cursor: pointer;
 }
 
+/* 王様ビュー: デブリ配置対象の盤面だけ縁を光らせる */
+.board-wrap {
+  border-radius: 12px;
+  padding: 4px;
+  transition: box-shadow 0.2s, background 0.2s;
+}
+.board-wrap.glow-target {
+  background: rgba(122, 92, 255, 0.12);
+  box-shadow: 0 0 0 2px var(--accent), 0 0 18px 3px rgba(122, 92, 255, 0.75);
+  animation: target-pulse 1.4s ease-in-out infinite;
+}
+.board-wrap.glow-target figcaption {
+  color: #b9a9ff;
+  font-weight: 700;
+}
+@keyframes target-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px var(--accent), 0 0 14px 2px rgba(122, 92, 255, 0.55); }
+  50% { box-shadow: 0 0 0 2px var(--accent), 0 0 22px 5px rgba(122, 92, 255, 0.9); }
+}
+
 figcaption {
   text-align: center;
   margin-top: 6px;
@@ -284,6 +304,10 @@ button:disabled {
 .seg button.active {
   background: var(--accent);
   color: #fff;
+}
+.seg-4 button {
+  padding: 9px 12px;
+  font-size: 0.85rem;
 }
 .setup-sub {
   font-size: 0.8rem !important;

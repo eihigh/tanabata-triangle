@@ -213,5 +213,45 @@ function ok(cond, msg) {
   ok(g.phase === PHASE.GAME_OVER, 'variant all-AI game reaches game over');
 }
 
+// --- ダイス: 全AIで決着し、AIの経路長が毎手番の出目に一致する ---------------
+{
+  const g = createGame({ STEPS: { orihime: 'd6', hikoboshi: 'd4' }, MAX_ROUNDS: 7, rng: mulberry32(2024) });
+  const rng = mulberry32(999);
+  let guard = 0;
+  while (g.phase !== PHASE.GAME_OVER && guard++ < 100) {
+    const who = g.phase.includes('ORIHIME') ? 'orihime' : 'hikoboshi';
+    if (g.phase.startsWith('KING_DEBRIS')) placeDebris(g, who, chooseKingDebris(g, who, rng));
+    else {
+      const m = chooseSeekerMove(g, who, rng);
+      ok(m.path.length === g[who].steps, `dice AI path length == current roll (${g[who].steps})`);
+      applyMove(g, who, m.path);
+    }
+  }
+  ok(g.phase === PHASE.GAME_OVER, 'dice all-AI game reaches game over');
+}
+
+// --- ダイス相手の belief は traveled 基準の到達＋パリティで絞る ---------------
+{
+  const g = createGame({ STEPS: { orihime: 'd6', hikoboshi: 'd6' }, rng: mulberry32(5) });
+  const rng = mulberry32(5);
+  placeDebris(g, 'orihime', chooseKingDebris(g, 'orihime', rng));
+  applyMove(g, 'orihime', chooseSeekerMove(g, 'orihime', rng).path);
+  placeDebris(g, 'hikoboshi', chooseKingDebris(g, 'hikoboshi', rng));
+  applyMove(g, 'hikoboshi', chooseSeekerMove(g, 'hikoboshi', rng).path);
+  placeDebris(g, 'orihime', chooseKingDebris(g, 'orihime', rng)); // round2 織姫手番前
+  const b = buildOpponentBelief(g, 'orihime');
+  const N = g.size;
+  const T = g.hikoboshi.traveled;
+  const p0 = g.starts.hikoboshi;
+  let respects = true;
+  for (let y = 0; y < N; y++)
+    for (let x = 0; x < N; x++) {
+      const d0 = Math.abs(x - p0.x) + Math.abs(y - p0.y);
+      if (b[y * N + x] > 0 && (d0 > T || (T - d0) % 2 !== 0)) respects = false;
+    }
+  ok(T >= 1, 'opponent has traveled at least 1');
+  ok(respects, 'dice belief respects traveled reach + parity');
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

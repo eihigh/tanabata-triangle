@@ -12,6 +12,8 @@ import {
   resolveStuck,
   activeSeeker,
   movesSoFar,
+  parseStepSpec,
+  rollStep,
   key,
   DIRS,
   PHASE,
@@ -194,6 +196,37 @@ function throws(fn, msg) {
   applyMove(g, 'hikoboshi', ['up', 'up', 'up']);
   ok(movesSoFar(g, 'orihime') === 1 && movesSoFar(g, 'hikoboshi') === 1, 'round2 KD_O: both 1 move');
   ok(g.starts.orihime.x === 0 && g.starts.hikoboshi.x === 8, 'public starts recorded');
+}
+
+// --- ダイス移動: parseStepSpec / rollStep -----------------------------------
+{
+  ok(parseStepSpec(3).kind === 'fixed' && parseStepSpec(3).n === 3, 'number -> fixed');
+  ok(parseStepSpec('d4').kind === 'dice' && parseStepSpec('d4').faces === 4, "'d4' -> dice4");
+  ok(parseStepSpec('1d6').faces === 6, "'1d6' -> dice6");
+  ok(parseStepSpec(undefined, 2).n === 2, 'undefined -> fallback');
+  const d6 = parseStepSpec('d6');
+  for (const r of [0, 0.16, 0.5, 0.83, 0.999]) {
+    const v = rollStep(d6, () => r);
+    ok(v >= 1 && v <= 6, `dice roll within 1..6 (${v})`);
+  }
+  ok(rollStep(parseStepSpec(3), () => 0.9) === 3, 'fixed roll ignores rng');
+}
+
+// --- ダイス移動: createGame / traveled 累積 ---------------------------------
+{
+  const g = createGame({ STEPS: { orihime: 'd4', hikoboshi: 3 }, rng: () => 0 });
+  ok(g.orihime.stepSpec.kind === 'dice' && g.orihime.stepSpec.faces === 4, 'orihime dice spec');
+  ok(g.hikoboshi.stepSpec.kind === 'fixed', 'hikoboshi fixed spec');
+  ok(g.orihime.steps === 1, 'dice initial roll with rng=0 -> 1 マス');
+  ok(g.orihime.traveled === 0 && g.hikoboshi.traveled === 0, 'traveled starts 0');
+}
+{
+  // d4 で出目4を強制（1+floor(0.75*4)=4）→ 4マス動いて traveled=4
+  const g = createGame({ STEPS: { orihime: 'd4' }, rng: () => 0.75 });
+  ok(g.orihime.steps === 4, 'forced roll 4');
+  placeDebris(g, 'orihime', { x: 5, y: 0 });
+  applyMove(g, 'orihime', ['down', 'down', 'down', 'down']); // (0,0)->(0,4)
+  ok(key(g.orihime.pos) === '0,4' && g.orihime.traveled === 4, 'traveled == Σ steps (4)');
 }
 
 // --- バリアントA: 織姫だけ移動量2 ------------------------------------------

@@ -31,7 +31,6 @@ import {
   reachEndsGrid,
   buildBlockedGrid,
   canPlaceDebris,
-  movesSoFar,
 } from './engine.js';
 
 // ---- 乱数（再現性のため差し替え可能。既定は Math.random）--------------------
@@ -110,10 +109,10 @@ export function buildOpponentBelief(state, who, params = BELIEF) {
   const N = state.size;
   const other = otherOf(who);
   const p0 = state.starts[other]; // 公開設定
-  const sO = state[other].steps; // 公開設定
-  const k = movesSoFar(state, other); // 手番構造から導出
   const my = state[who];
-  const budget = k * sO;
+  // 相手の累積移動歩数（公開）。固定でもダイスでも、純移動L1 ≤ budget かつ
+  // (budget - L1) が偶数、という到達＋パリティの硬い制約がそのまま成立する。
+  const budget = state[other].traveled;
   const F = sharedFocal(state, who);
   const expPos = advanceToward(p0, F, budget);
   const hintCells = [...my.revealedHints].map(parseKey);

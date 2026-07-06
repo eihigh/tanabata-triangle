@@ -34,30 +34,36 @@ const EPS_LIST = (args.eps ?? '0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0')
   .split(',')
   .map(Number);
 
-// 単発設定を引数から組み立てる（board / oriSteps / hikSteps）
+// 単発設定を引数から組み立てる。
+//   board=7  ori=d6  hik=3   （ori/hik は 2|3|d4|d6。oriSteps/hikSteps 数値も後方互換）
 function configFromArgs() {
   const c = {};
   if (args.board) c.BOARD_SIZE = parseInt(args.board, 10);
   const steps = {};
-  if (args.oriSteps) steps.orihime = parseInt(args.oriSteps, 10);
-  if (args.hikSteps) steps.hikoboshi = parseInt(args.hikSteps, 10);
+  const ori = args.ori ?? args.oriSteps;
+  const hik = args.hik ?? args.hikSteps;
+  if (ori != null) steps.orihime = ori; // engine 側 parseStepSpec が 'd6'/'3' を解釈
+  if (hik != null) steps.hikoboshi = hik;
   if (Object.keys(steps).length) c.STEPS = steps;
   return c;
 }
 
-// combos モードで比較する4バリアント
+// combos モードで比較するバリアント（固定＋ダイス）
 const COMBOS = [
   ['baseline (9x9, 織姫3/彦星3)', {}],
   ['A       (9x9, 織姫2/彦星3)', { STEPS: { orihime: 2 } }],
   ['B       (7x7, 織姫3/彦星3)', { BOARD_SIZE: 7 }],
   ['A+B     (7x7, 織姫2/彦星3)', { BOARD_SIZE: 7, STEPS: { orihime: 2 } }],
+  ['D1      (9x9, 織姫1d6/彦星3)', { STEPS: { orihime: 'd6' } }],
+  ['D2      (9x9, 両者1d6)', { STEPS: { orihime: 'd6', hikoboshi: 'd6' } }],
+  ['D3      (9x9, 両者1d4)', { STEPS: { orihime: 'd4', hikoboshi: 'd4' } }],
 ];
 
 // ---- 1ゲームのシミュレーション ---------------------------------------------
 // シーカー/王様の epsilon を独立に指定できる。
 // 返り値: { winner, clearedRound }  clearedRound は出会えたラウンド（負けなら null）
 function simulateGame(rng, seekerEps, kingEps, gameConfig) {
-  const g = createGame(gameConfig);
+  const g = createGame({ ...gameConfig, rng }); // 共有rngをダイスにも供給（seedで再現可能）
   const sp = { ...SEEKER, epsilon: seekerEps };
   const kp = { ...KING, epsilon: kingEps };
 

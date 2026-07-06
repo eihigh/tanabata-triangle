@@ -39,26 +39,53 @@ export const parseKey = (k) => {
 export const eq = (a, b) => a.x === b.x && a.y === b.y;
 const inBounds = (c, size) => c.x >= 0 && c.y >= 0 && c.x < size && c.y < size;
 
+// ---- 移動量スペック（固定 or ダイス）---------------------------------------
+// 数値 → 固定n。文字列 'd4'/'1d4'/'d6'/'2' → ダイス/固定。{kind,...} はそのまま。
+export function parseStepSpec(v, fallback) {
+  if (v == null) return parseStepSpec(fallback, 3);
+  if (typeof v === 'number') return { kind: 'fixed', n: v };
+  if (typeof v === 'object' && v.kind) return v;
+  const s = String(v).trim().toLowerCase();
+  const dice = /^(\d+)?d(\d+)$/.exec(s);
+  if (dice) return { kind: 'dice', faces: parseInt(dice[2], 10) };
+  if (/^\d+$/.test(s)) return { kind: 'fixed', n: parseInt(s, 10) };
+  throw new Error(`parseStepSpec: bad spec ${v}`);
+}
+// このスペックで取りうる最大歩数（候補生成の上限などに使用）。
+export const maxStep = (spec) => (spec.kind === 'dice' ? spec.faces : spec.n);
+// 1手の歩数を決める。固定は rng 不使用（決定的）、ダイスは 1..faces を一様に。
+export function rollStep(spec, rng) {
+  return spec.kind === 'dice' ? 1 + Math.floor(rng() * spec.faces) : spec.n;
+}
+// who の今手番の歩数を振り直す（手番開始時に呼ぶ）。
+export function rollFor(state, who) {
+  state[who].steps = rollStep(state[who].stepSpec, state.rng);
+  return state[who].steps;
+}
+
 // ---- 初期化 -----------------------------------------------------------------
 export function createGame(config = {}) {
   const cfg = { ...DEFAULTS, ...config };
   const size = cfg.BOARD_SIZE;
+  const rng = config.rng || Math.random;
   // 開始位置: 指定が無ければ盤の対角コーナー（盤サイズに追従）
   const start = config.START || {
     orihime: { x: 0, y: 0 },
     hikoboshi: { x: size - 1, y: size - 1 },
   };
-  // 移動量: 指定が無ければ両者 STEPS_PER_MOVE。片方だけ変えるバリアントに対応。
+  // 移動量スペック: 指定が無ければ両者 STEPS_PER_MOVE（固定）。ダイスや片側変更に対応。
   const stepsCfg = config.STEPS || {};
-  const stepFor = (who) => stepsCfg[who] ?? cfg.STEPS_PER_MOVE;
+  const specFor = (who) => parseStepSpec(stepsCfg[who], cfg.STEPS_PER_MOVE);
   // 初期中央デブリ（開始マス上には置けないので、開始マスと重ならない盤にのみ置く）
   const center = { x: Math.floor(size / 2), y: Math.floor(size / 2) };
-  const mkSeeker = (pos, steps) => {
+  const mkSeeker = (pos, spec) => {
     const debris = new Set();
     if (cfg.INITIAL_CENTER_DEBRIS && !eq(pos, center)) debris.add(key(center));
     return {
       pos: { ...pos },
-      steps, // このシーカーが1手で動くマス数
+      stepSpec: spec, // 移動量スペック（固定/ダイス）
+      steps: rollStep(spec, rng), // 今手番の歩数（ダイスは毎手番振り直す）
+      traveled: 0, // 累積移動歩数（公開情報。信念分布の到達判定に使う）
       trail: new Set([key(pos)]), // 開始マスも軌跡に含む
       debris,
       revealedHints: new Set(), // 手番開始時に凍結される交差ヒント
@@ -66,6 +93,7 @@ export function createGame(config = {}) {
   };
   return {
     size,
+    rng, // ダイス用の乱数源（既定 Math.random、テスト/シミュは差し替え可）
     stepsPerMove: cfg.STEPS_PER_MOVE, // 既定移動量（表示・参照用）
     // 開始位置は公開のゲーム設定（隠し情報ではない）。シーカーAIが相手の
     // 到達可能範囲を推論するために参照してよい。
@@ -80,8 +108,8 @@ export function createGame(config = {}) {
     phase: PHASE.KING_DEBRIS_ORIHIME,
     winner: null, // null | 'seekers' | 'king'
     meetingCell: null, // 出会えたマス（シーカー勝ち時）
-    orihime: mkSeeker(start.orihime, stepFor('orihime')),
-    hikoboshi: mkSeeker(start.hikoboshi, stepFor('hikoboshi')),
+    orihime: mkSeeker(start.orihime, specFor('orihime')),
+    hikoboshi: mkSeeker(start.hikoboshi, specFor('hikoboshi')),
   };
 }
 
@@ -275,9 +303,10 @@ export function applyMove(state, who, path) {
     cur = to;
     visited.push(to);
   }
-  // 軌跡に追記、駒を移動
+  // 軌跡に追記、駒を移動、累積歩数を加算（公開情報）
   for (const c of visited) s.trail.add(key(c));
   s.pos = cur;
+  s.traveled += s.steps;
 
   // 勝敗判定（同座標停止でシーカー勝ち）
   if (checkMeeting(state)) {
@@ -304,10 +333,12 @@ export function checkMeeting(state) {
 }
 
 // フェーズ遷移。MAX_ROUNDS 到達で王様勝ち。
+// 王様デブリフェーズに入る＝そのシーカーの手番開始なので、ここで出目を振る。
 export function advancePhase(state) {
   switch (state.phase) {
     case PHASE.MOVE_ORIHIME:
       state.phase = PHASE.KING_DEBRIS_HIKOBOSHI;
+      rollFor(state, 'hikoboshi');
       break;
     case PHASE.MOVE_HIKOBOSHI:
       if (state.round >= state.maxRounds) {
@@ -316,6 +347,7 @@ export function advancePhase(state) {
       } else {
         state.round += 1;
         state.phase = PHASE.KING_DEBRIS_ORIHIME;
+        rollFor(state, 'orihime');
       }
       break;
     default:

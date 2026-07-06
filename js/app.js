@@ -53,8 +53,8 @@ const ui = {
 
 // 役の担当: 'human' | 'ai'
 let roles = { orihime: 'human', hikoboshi: 'ai', king: 'ai' };
-// バリアント設定（開始画面で選択。彦星は常に3マス）
-let variant = { boardSize: 9, orihimeSteps: 3 };
+// バリアント設定（開始画面で選択）。move は '2'|'3'|'d4'|'d6'。
+let variant = { boardSize: 9, orihime: '3', hikoboshi: '3' };
 
 let state;
 let path; // 移動入力中の {x,y} 配列（先頭=現在位置）
@@ -71,7 +71,8 @@ const canRevealAI = () => roles.orihime !== 'human' && roles.hikoboshi !== 'huma
 function start() {
   state = createGame({
     BOARD_SIZE: variant.boardSize,
-    STEPS: { orihime: variant.orihimeSteps },
+    STEPS: { orihime: variant.orihime, hikoboshi: variant.hikoboshi },
+    rng: Math.random,
   });
   path = null;
   debrisPick = null;
@@ -119,8 +120,8 @@ function runAITurn() {
     else renderSeekerReadonly(who);
     ui.roleBadge.textContent = `${actorLabel}(AI)`;
     ui.status.textContent = debris
-      ? `王様(AI)が ${SEEKER_LABEL[who]}の盤面 にデブリを検討中…`
-      : `${SEEKER_LABEL[who]}(AI)が移動先を検討中…`;
+      ? `王様(AI)が ${SEEKER_LABEL[who]}の盤面(今回${state[who].steps}マス${diceTag(who)}) にデブリを検討中…`
+      : `${SEEKER_LABEL[who]}(AI)が${state[who].steps}マス${diceTag(who)}の移動先を検討中…`;
   } else {
     // 人間シーカーがいる: 盤面を伏せて思考中カードのみ
     ui.thinkingText.textContent = `${actorLabel}(AI)が${debris ? 'デブリを配置' : '移動'}中…`;
@@ -152,10 +153,11 @@ function aiAct(debris, who, reveal) {
     resolveStuck(state);
     return showResult();
   }
+  const rolled = state[who].steps;
   applyMove(state, who, move.path);
   if (reveal) {
     renderSeekerReadonly(who);
-    ui.status.textContent = `${SEEKER_LABEL[who]}(AI)が (${move.end.x}, ${move.end.y}) へ移動`;
+    ui.status.textContent = `${SEEKER_LABEL[who]}(AI)が ${rolled}マス動いて (${move.end.x}, ${move.end.y}) へ`;
     setTimeout(() => (state.winner ? showResult() : beginPhase()), RESULT_MS);
   } else {
     ui.thinking.classList.add('hidden');
@@ -169,6 +171,21 @@ function hideControls() {
   ui.debrisControls.classList.add('hidden');
 }
 
+// 王様ビュー: デブリ配置対象の盤面(who)の縁だけを光らせる
+function setKingTargetGlow(who) {
+  ui.canvas.parentElement.classList.toggle('glow-target', who === 'orihime');
+  ui.canvas2.parentElement.classList.toggle('glow-target', who === 'hikoboshi');
+}
+function clearBoardGlow() {
+  ui.canvas.parentElement.classList.remove('glow-target');
+  ui.canvas2.parentElement.classList.remove('glow-target');
+}
+
+// ダイス移動なら現在の出目タグ（例 " 🎲4"）、固定なら空文字
+function diceTag(who) {
+  return state[who].stepSpec.kind === 'dice' ? ` 🎲${state[who].steps}` : '';
+}
+
 // 王様ビューを操作なしで描画（AI観戦用）
 function renderKingReadonly(who) {
   ui.canvas.onclick = null;
@@ -177,6 +194,7 @@ function renderKingReadonly(who) {
   drawBoard(ui.canvas, state, { who: 'orihime', reveal: true });
   drawBoard(ui.canvas2, state, { who: 'hikoboshi', reveal: true });
   labelKingBoards(who);
+  setKingTargetGlow(who);
 }
 
 // シーカービューを操作なしで描画（AI観戦用）
@@ -184,6 +202,7 @@ function renderSeekerReadonly(who) {
   ui.canvas.onclick = null;
   ui.canvas2.onclick = null;
   ui.boards.classList.remove('king');
+  clearBoardGlow();
   el('board-label').textContent = `${SEEKER_LABEL[who]}の盤面`;
   el('board2-label').textContent = '';
   drawBoard(ui.canvas, state, { who, reveal: false });
@@ -209,7 +228,10 @@ function updateHeader() {
   if (king) {
     ui.roleBadge.textContent = '王様';
     ui.roleBadge.style.background = '#7a5cff';
-    ui.status.textContent = `${SEEKER_LABEL[who]}の盤面にデブリを1個置いて邪魔しよう（軌跡の無いマス）`;
+    const tag = diceTag(who);
+    ui.status.textContent =
+      `${SEEKER_LABEL[who]}(今回${state[who].steps}マス${tag})の盤面にデブリを1個置いて邪魔しよう` +
+      '（光る盤・軌跡の無いマス）';
   } else {
     ui.roleBadge.textContent = SEEKER_LABEL[who];
     ui.roleBadge.style.background = COLORS[who].piece;
@@ -237,6 +259,7 @@ function setupKingView(who) {
   };
   render();
   labelKingBoards(who);
+  setKingTargetGlow(who);
 
   const onClick = ( evt) => {
     const cell = cellFromEvent(targetCanvas, evt);
@@ -304,6 +327,7 @@ function setupSeekerView(who) {
   ui.moveControls.classList.remove('hidden');
   ui.dirPad.classList.remove('hidden');
   ui.boards.classList.remove('king');
+  clearBoardGlow();
   ui.canvas.onclick = null;
   ui.canvas2.onclick = null;
   el('board-label').textContent = `${SEEKER_LABEL[who]}の盤面`;
@@ -371,7 +395,8 @@ function refreshMoveControls(who) {
   }
   ui.btnUndo.disabled = path.length <= 1;
   ui.btnConfirm.disabled = used !== need;
-  ui.status.textContent = `移動: ${used} / ${need} マス` +
+  const dice = state[who].stepSpec.kind === 'dice' ? `🎲${need} ` : '';
+  ui.status.textContent = `${dice}移動: ${used} / ${need} マス` +
     (used === need ? '（確定できます）' : `（ちょうど${need}マス動く）`);
 }
 
@@ -418,19 +443,23 @@ function initRolePicker() {
   updateSetupNote();
 }
 
-// バリアント選択（盤面サイズ・織姫の移動量）。数値なので parseInt して保持。
+// バリアント選択（盤面サイズ・織姫/彦星の移動量）。
+// board は数値、orihime/hikoboshi は移動スペック文字列（'2'|'3'|'d4'|'d6'）。
 function initVariantPicker() {
-  const keyOf = { board: 'boardSize', oriSteps: 'orihimeSteps' };
   el('variant-picker')
     .querySelectorAll('.role-row')
     .forEach((row) => {
-      const vkey = keyOf[row.dataset.variant];
+      const vkey = row.dataset.variant === 'board' ? 'boardSize' : row.dataset.variant;
+      const numeric = vkey === 'boardSize';
       const buttons = row.querySelectorAll('.seg button');
       const paint = () =>
-        buttons.forEach((b) => b.classList.toggle('active', Number(b.dataset.val) === variant[vkey]));
+        buttons.forEach((b) => {
+          const val = numeric ? Number(b.dataset.val) : b.dataset.val;
+          b.classList.toggle('active', val === variant[vkey]);
+        });
       buttons.forEach((b) =>
         b.addEventListener('click', () => {
-          variant[vkey] = Number(b.dataset.val);
+          variant[vkey] = numeric ? Number(b.dataset.val) : b.dataset.val;
           paint();
         }),
       );
