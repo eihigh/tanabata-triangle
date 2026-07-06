@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>七夕トライアングル</title>
+    <link rel="stylesheet" href="css/style.css?v=6" />
+  </head>
+  <body>
+    <div id="app">
+      <header id="topbar">
+        <h1>七夕トライアングル</h1>
+        <div class="meta">
+          <span id="role-badge" class="badge">織姫</span>
+          <span id="round-info">ラウンド 1 / 7</span>
+          <button id="btn-restart" class="ghost">最初から</button>
+        </div>
+      </header>
+
+      <p id="status" class="status"></p>
+
+      <!-- 勝敗リザルト（通常フローで盤面の上に積む）-->
+      <div id="result-banner" class="result-banner hidden">
+        <h2 id="rb-title"></h2>
+        <p id="rb-text"></p>
+        <button id="rb-btn" class="primary">もう一度</button>
+      </div>
+
+      <div id="boards">
+        <figure class="board-wrap">
+          <canvas id="board" width="540" height="540"></canvas>
+          <figcaption id="board-label">織姫の盤面</figcaption>
+        </figure>
+        <figure class="board-wrap board2-wrap">
+          <canvas id="board2" width="540" height="540"></canvas>
+          <figcaption id="board2-label"></figcaption>
+        </figure>
+      </div>
+
+      <!-- シーカー移動コントロール -->
+      <div id="move-controls" class="controls hidden">
+        <div id="dir-pad" class="dir-pad">
+          <button id="dir-up" class="dir">↑</button>
+          <div class="dir-row">
+            <button id="dir-left" class="dir">←</button>
+            <button id="dir-down" class="dir">↓</button>
+            <button id="dir-right" class="dir">→</button>
+          </div>
+        </div>
+        <div class="action-row">
+          <button id="btn-undo" class="ghost">戻す</button>
+          <button id="btn-confirm" class="primary">確定</button>
+        </div>
+      </div>
+
+      <!-- 王様デブリコントロール -->
+      <div id="debris-controls" class="controls hidden">
+        <p class="hint-text">設置対象の盤面で、軌跡の無いマスをクリックしてデブリを選択</p>
+        <button id="btn-place-debris" class="primary">ここに置く</button>
+      </div>
+    </div>
+
+    <!-- ゲーム開始前の役選択 -->
+    <div id="setup" class="veil">
+      <div class="veil-card setup-card">
+        <div class="veil-icon">🎋</div>
+        <h2>七夕トライアングル</h2>
+        <p class="setup-lead">各役の担当を選んでください（任意の組み合わせ）</p>
+        <div class="role-picker" id="role-picker">
+          <div class="role-row" data-role="orihime">
+            <span class="role-name">織姫</span>
+            <div class="seg">
+              <button data-val="human">人間</button>
+              <button data-val="ai">AI</button>
+            </div>
+          </div>
+          <div class="role-row" data-role="hikoboshi">
+            <span class="role-name">彦星</span>
+            <div class="seg">
+              <button data-val="human">人間</button>
+              <button data-val="ai">AI</button>
+            </div>
+          </div>
+          <div class="role-row" data-role="king">
+            <span class="role-name">王様</span>
+            <div class="seg">
+              <button data-val="human">人間</button>
+              <button data-val="ai">AI</button>
+            </div>
+          </div>
+        </div>
+        <p class="setup-sub">バリアント</p>
+        <div class="role-picker" id="variant-picker">
+          <div class="role-row" data-variant="board">
+            <span class="role-name">盤面サイズ</span>
+            <div class="seg">
+              <button data-val="9">9×9</button>
+              <button data-val="7">7×7</button>
+            </div>
+          </div>
+          <div class="role-row" data-variant="orihime">
+            <span class="role-name">織姫の移動</span>
+            <div class="seg seg-4">
+              <button data-val="2">2</button>
+              <button data-val="3">3</button>
+              <button data-val="d4">1d4</button>
+              <button data-val="d6">1d6</button>
+            </div>
+          </div>
+          <div class="role-row" data-variant="hikoboshi">
+            <span class="role-name">彦星の移動</span>
+            <div class="seg seg-4">
+              <button data-val="2">2</button>
+              <button data-val="3">3</button>
+              <button data-val="d4">1d4</button>
+              <button data-val="d6">1d6</button>
+            </div>
+          </div>
+          <div class="role-row" data-variant="publicRolls">
+            <span class="role-name">出目の公開</span>
+            <div class="seg seg-3">
+              <button data-val="all">全員</button>
+              <button data-val="king">王様のみ</button>
+              <button data-val="none">非公開</button>
+            </div>
+          </div>
+        </div>
+        <p class="setup-note" id="setup-note"></p>
+        <button id="btn-start" class="primary big">ゲーム開始</button>
+      </div>
+    </div>
+
+    <!-- AI 思考中（人間シーカーがいる対戦では盤面を伏せる）-->
+    <div id="thinking" class="veil hidden">
+      <div class="veil-card">
+        <div class="veil-icon spin">🤖</div>
+        <p id="thinking-text"></p>
+      </div>
+    </div>
+
+    <!-- パス回しハンドオフ -->
+    <div id="handoff" class="veil hidden">
+      <div class="veil-card">
+        <div class="veil-icon">🤝</div>
+        <p id="handoff-text"></p>
+        <button id="handoff-btn" class="primary big">見る準備ができた</button>
+      </div>
+    </div>
+
+    <!-- 勝敗 -->
+    <div id="overlay" class="veil hidden">
+      <div class="veil-card">
+        <h2 id="overlay-title"></h2>
+        <p id="overlay-text"></p>
+        <button id="overlay-btn" class="primary big">もう一度</button>
+      </div>
+    </div>
+
+    <script type="module" src="js/app.js?v=7"></script>
+  </body>
+</html>
