@@ -94,6 +94,9 @@ export function createGame(config = {}) {
   return {
     size,
     rng, // ダイス用の乱数源（既定 Math.random、テスト/シミュは差し替え可）
+    // 出目（＝累積歩数）を公開するか。true(既定)=王様も相手シーカーも知る。
+    // false=各自の出目は本人のみ（AIは相手の traveled を使わず分布で推論する）。
+    publicRolls: config.PUBLIC_ROLLS !== false,
     stepsPerMove: cfg.STEPS_PER_MOVE, // 既定移動量（表示・参照用）
     // 開始位置は公開のゲーム設定（隠し情報ではない）。シーカーAIが相手の
     // 到達可能範囲を推論するために参照してよい。

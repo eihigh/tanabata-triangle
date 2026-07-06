@@ -253,5 +253,40 @@ function ok(cond, msg) {
   ok(respects, 'dice belief respects traveled reach + parity');
 }
 
+// --- 非公開ダイス: belief は k*faces 上界のみ・パリティ制約を外す ------------
+{
+  // 公開: 相手 traveled 基準で厳密（パリティで約半分除外）
+  // 非公開: 上界 k*faces のみ → 許容マスが増える（パリティ除外なし）
+  const pub = createGame({ STEPS: { hikoboshi: 'd6' }, rng: mulberry32(3) });
+  const prv = createGame({ STEPS: { hikoboshi: 'd6' }, PUBLIC_ROLLS: false, rng: mulberry32(3) });
+  // 同じ手順で1ラウンド進める（同seedのgame rngで出目も一致）
+  for (const g of [pub, prv]) {
+    const rng = mulberry32(11);
+    placeDebris(g, 'orihime', chooseKingDebris(g, 'orihime', rng));
+    applyMove(g, 'orihime', chooseSeekerMove(g, 'orihime', rng).path);
+    placeDebris(g, 'hikoboshi', chooseKingDebris(g, 'hikoboshi', rng));
+    applyMove(g, 'hikoboshi', chooseSeekerMove(g, 'hikoboshi', rng).path);
+    placeDebris(g, 'orihime', chooseKingDebris(g, 'orihime', rng));
+  }
+  const bPub = buildOpponentBelief(pub, 'orihime');
+  const bPrv = buildOpponentBelief(prv, 'orihime');
+  const nz = (b) => [...b].filter((v) => v > 0).length;
+  ok(pub.publicRolls === true && prv.publicRolls === false, 'publicRolls flag set');
+  ok(nz(bPrv) > nz(bPub), `private belief is fuzzier (nz ${nz(bPrv)} > ${nz(bPub)})`);
+}
+
+// --- 非公開ダイスでも全AIで決着する ------------------------------------------
+{
+  const g = createGame({ STEPS: { orihime: 'd6', hikoboshi: 'd4' }, PUBLIC_ROLLS: false, rng: mulberry32(7) });
+  const rng = mulberry32(7);
+  let guard = 0;
+  while (g.phase !== PHASE.GAME_OVER && guard++ < 100) {
+    const who = g.phase.includes('ORIHIME') ? 'orihime' : 'hikoboshi';
+    if (g.phase.startsWith('KING_DEBRIS')) placeDebris(g, who, chooseKingDebris(g, who, rng));
+    else applyMove(g, who, chooseSeekerMove(g, who, rng).path);
+  }
+  ok(g.phase === PHASE.GAME_OVER, 'private-rolls all-AI game reaches game over');
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

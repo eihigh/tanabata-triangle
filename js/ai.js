@@ -31,6 +31,7 @@ import {
   reachEndsGrid,
   buildBlockedGrid,
   canPlaceDebris,
+  movesSoFar,
 } from './engine.js';
 
 // ---- 乱数（再現性のため差し替え可能。既定は Math.random）--------------------
@@ -110,11 +111,25 @@ export function buildOpponentBelief(state, who, params = BELIEF) {
   const other = otherOf(who);
   const p0 = state.starts[other]; // 公開設定
   const my = state[who];
-  // 相手の累積移動歩数（公開）。固定でもダイスでも、純移動L1 ≤ budget かつ
-  // (budget - L1) が偶数、という到達＋パリティの硬い制約がそのまま成立する。
-  const budget = state[other].traveled;
+  const spec = state[other].stepSpec;
+  // 到達 budget とパリティ制約の使い分け:
+  // - 公開 or 固定: 相手の累積歩数 traveled は既知 → 「L1 ≤ traveled かつ (traveled-L1) 偶数」の硬い制約。
+  // - 非公開ダイス: 出目は本人のみ → 手番数 k と最大目 faces から上界 k*faces のみ（パリティは不定）。
+  let budget;
+  let useParity;
+  let advBudget; // 前進事前分布に使う期待進行量
+  if (state.publicRolls === false && spec.kind === 'dice') {
+    const k = movesSoFar(state, other);
+    budget = k * spec.faces;
+    useParity = false;
+    advBudget = Math.round((k * (1 + spec.faces)) / 2); // 期待累積歩数
+  } else {
+    budget = state[other].traveled;
+    useParity = true;
+    advBudget = budget;
+  }
   const F = sharedFocal(state, who);
-  const expPos = advanceToward(p0, F, budget);
+  const expPos = advanceToward(p0, F, advBudget);
   const hintCells = [...my.revealedHints].map(parseKey);
 
   const b = new Float64Array(N * N);
@@ -124,8 +139,8 @@ export function buildOpponentBelief(state, who, params = BELIEF) {
   for (let y = 0; y < N; y++) {
     for (let x = 0; x < N; x++) {
       const d0 = Math.abs(x - p0.x) + Math.abs(y - p0.y);
-      // 1. 到達可能性＋パリティ（硬い制約）
-      if (d0 > budget || (budget - d0) % 2 !== 0) continue;
+      // 1. 到達可能性（＋公開時はパリティ）の制約
+      if (d0 > budget || (useParity && (budget - d0) % 2 !== 0)) continue;
       // 2. 負の情報: 自分の軌跡のうちヒントに無いマスに相手は「今」いない
       const kk = `${x},${y}`;
       if (my.trail.has(kk) && !my.revealedHints.has(kk)) continue;
@@ -250,27 +265,42 @@ export function chooseKingDebris(state, who, rng = Math.random, params = KING) {
   const target = state[otherOf(who)];
   const p = target.pos; // 実際の合流目標
   const pIdx = p.y * N + p.x;
-  const steps = mover.steps;
   const startIdx = mover.pos.y * N + mover.pos.x;
   const mid = { x: Math.round((mover.pos.x + p.x) / 2), y: Math.round((mover.pos.y + p.y) / 2) };
+  const farDist = manhattan(mover.pos, p);
 
   const grid = buildBlockedGrid(state, who); // この盤のデブリのみ進入不可
 
-  // 到達端点集合から「p が到達可能か」「p への最短距離」を同時に得る
-  const evalReach = (ends) => {
-    let best = Infinity;
-    let threat = false;
-    for (let i = 0; i < ends.length; i++) {
-      const idx = ends[i];
-      if (idx === pIdx) threat = true;
-      const x = idx % N;
-      const d = Math.abs(x - p.x) + Math.abs((idx - x) / N - p.y);
-      if (d < best) best = d;
+  // 王様が想定する今手番の出目リスト（重み付き）。
+  // - 公開 or 固定: 実際の出目 mover.steps のみ（従来どおり）。
+  // - 非公開ダイス: 出目を知らないので 1..faces を一様に想定して分布で守る。
+  const spec = mover.stepSpec;
+  const rolls =
+    state.publicRolls === false && spec.kind === 'dice'
+      ? Array.from({ length: spec.faces }, (_, i) => ({ s: i + 1, w: 1 / spec.faces }))
+      : [{ s: mover.steps, w: 1 }];
+
+  // 現在の grid で「p に着地される確率(threatProb)」と「p への期待最短距離(bestExp)」を返す。
+  const evalRolls = () => {
+    let threatProb = 0;
+    let bestExp = 0;
+    for (const { s, w } of rolls) {
+      const ends = reachEndsGrid(N, s, startIdx, grid);
+      let best = Infinity;
+      let threat = false;
+      for (let i = 0; i < ends.length; i++) {
+        const idx = ends[i];
+        if (idx === pIdx) threat = true;
+        const x = idx % N;
+        const d = Math.abs(x - p.x) + Math.abs((idx - x) / N - p.y);
+        if (d < best) best = d;
+      }
+      threatProb += w * (threat ? 1 : 0);
+      bestExp += w * (Number.isFinite(best) ? best : farDist + N);
     }
-    return { threat, best };
+    return { threatProb, bestExp };
   };
-  const base = evalReach(reachEndsGrid(N, steps, startIdx, grid));
-  const baseBest = Number.isFinite(base.best) ? base.best : manhattan(mover.pos, p);
+  const base = evalRolls();
 
   // 候補集合: 動くシーカー周辺 ∪ 相手位置の4近傍 ∪ 中点周辺（canPlaceDebris で濾過）
   const candSet = new Map();
@@ -300,11 +330,11 @@ export function chooseKingDebris(state, who, rng = Math.random, params = KING) {
   const scores = cands.map((d) => {
     const di = d.y * N + d.x;
     grid[di] = 1;
-    const r = evalReach(reachEndsGrid(N, steps, startIdx, grid));
+    const r = evalRolls();
     grid[di] = 0;
-    const best = Number.isFinite(r.best) ? r.best : baseBest + N; // 完全封鎖は高評価
-    let score = params.wObstruct * (best - baseBest);
-    if (base.threat && r.threat) score -= params.threatPenalty; // 脅威を放置する候補は大減点
+    // 期待最短距離を遠ざけるほど高評価、着地確率が残るほど減点
+    let score = params.wObstruct * (r.bestExp - base.bestExp);
+    score -= params.threatPenalty * r.threatProb; // 着地合流の残存確率で連続減点
     if (manhattan(d, p) === 1) score += params.adjacentBonus; // 着地急所
     score += params.corridorBonus * Math.exp(-manhattan(d, mid) / 2); // 回廊封鎖
     return score;

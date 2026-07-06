@@ -30,6 +30,8 @@ const GAMES = parseInt(args.games ?? '2000', 10);
 const BUDGET_MS = parseInt(args.budgetMs ?? '5000', 10);
 const SEED = parseInt(args.seed ?? '12345', 10);
 const TARGET = args.target ?? 'all'; // どの役に乱数を混入するか
+// 出目（累積歩数）を公開するか。public=0 で非公開（各自の出目は本人のみ）。
+const PUBLIC_ROLLS = !(args.public === '0' || args.public === 'false');
 const EPS_LIST = (args.eps ?? '0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0')
   .split(',')
   .map(Number);
@@ -63,7 +65,7 @@ const COMBOS = [
 // シーカー/王様の epsilon を独立に指定できる。
 // 返り値: { winner, clearedRound }  clearedRound は出会えたラウンド（負けなら null）
 function simulateGame(rng, seekerEps, kingEps, gameConfig) {
-  const g = createGame({ ...gameConfig, rng }); // 共有rngをダイスにも供給（seedで再現可能）
+  const g = createGame({ PUBLIC_ROLLS, ...gameConfig, rng }); // 共有rngをダイスに供給・出目公開設定
   const sp = { ...SEEKER, epsilon: seekerEps };
   const kp = { ...KING, epsilon: kingEps };
 
@@ -132,7 +134,7 @@ function runSweep(label, gameConfig, rng, csvRows) {
 // ---- 実行 -------------------------------------------------------------------
 const rng = mulberry32(SEED);
 console.log('七夕トライアングル シーカー勝率シミュレーション（全AI・モンテカルロ）');
-console.log(`  試行/設定=${GAMES}  タイムアウト/設定=${BUDGET_MS}ms  seed=${SEED}  乱数混入対象=${TARGET}`);
+console.log(`  試行/設定=${GAMES}  タイムアウト/設定=${BUDGET_MS}ms  seed=${SEED}  乱数混入対象=${TARGET}  出目公開=${PUBLIC_ROLLS}`);
 console.log('  乱数混入率 epsilon: 0=AI本来の分布, 1=完全ランダム');
 
 // ---- matrix モード: seekerEps × kingEps の 3×3 クリア率 ---------------------
