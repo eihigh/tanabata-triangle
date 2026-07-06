@@ -241,12 +241,16 @@ button:disabled {
   align-items: center;
   justify-content: center;
   z-index: 10;
+  overflow-y: auto;
+  padding: 24px;
 }
 
 .veil-card {
   text-align: center;
   padding: 32px;
   max-width: 380px;
+  max-height: 100%;
+  overflow-y: auto;
 }
 
 .veil-icon {
@@ -380,6 +384,68 @@ button:disabled {
   color: var(--muted);
   min-height: 1.2em;
   margin: 16px 0 20px !important;
+}
+
+.rules {
+  text-align: left;
+  margin: 0 0 20px;
+  border: 1px solid #2a3252;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.rules>summary {
+  cursor: pointer;
+  padding: 12px 16px;
+  font-weight: 700;
+  color: var(--accent);
+  list-style: none;
+  user-select: none;
+}
+
+.rules>summary::-webkit-details-marker {
+  display: none;
+}
+
+.rules>summary::before {
+  content: "▸ ";
+}
+
+.rules[open]>summary::before {
+  content: "▾ ";
+}
+
+.rules-body {
+  padding: 0 16px 12px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.rules-body strong {
+  color: var(--text, #e6eaf5);
+}
+
+.rules-body ul {
+  margin: 8px 0;
+  padding-left: 1.2em;
+}
+
+.rules-body li {
+  margin-bottom: 8px;
+}
+
+.rules-body code {
+  font-size: 0.82em;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.rules-foot {
+  margin: 8px 0 0;
+  font-size: 0.8rem;
+  opacity: 0.85;
 }
 
 .veil-icon.spin {

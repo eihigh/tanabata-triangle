@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>七夕トライアングル</title>
-    <link rel="stylesheet" href="css/style.css?v=6" />
+    <link rel="stylesheet" href="css/style.css?v=8" />
   </head>
   <body>
     <div id="app">
@@ -126,6 +126,25 @@
           </div>
         </div>
         <p class="setup-note" id="setup-note"></p>
+        <details class="rules">
+          <summary>ルールを読む</summary>
+          <div class="rules-body">
+            <p>
+              3人用の隠れんぼ系ボードゲーム。<strong>織姫・彦星（シーカー）</strong>は出会えれば勝ち、
+              <strong>王様</strong>は二人を出会わせなければ勝ち。
+            </p>
+            <ul>
+              <li>織姫と彦星はそれぞれのグリッド盤面上にいる。各シーカーは<strong>自分の盤面だけ</strong>を見る。王様は両方を見る。</li>
+              <li>シーカーは1手で<strong>自分の移動量ぶん</strong>（例: 織姫1d4、彦星1d6）上下左右にちょうどそのマス数だけ移動する（途中停止不可、盤外・デブリへは進入不可）。出目は設定により王様のみ／全員／非公開。</li>
+              <li>開始時、両盤の<strong>中央に共通のデブリが1個</strong>置かれている（両盤同一＝シーカー共通知識）。</li>
+              <li>通ったマスには<strong>軌跡</strong>が残る。<code>織姫の軌跡 ∩ 彦星の軌跡</code> が<strong>交差ヒント（★）</strong>として各手番開始時に開示される。</li>
+              <li>王様は各シーカーの移動前に、その盤面の<strong>軌跡が無いマス</strong>にデブリを1個置ける（2盤面で別々の位置に置ける）。ただし<strong>相手シーカーの現在位置には置けない</strong>。</li>
+              <li>手番の流れ: <code>織姫デブリ → 織姫移動 → 彦星デブリ → 彦星移動 →（ヒント更新）→ …</code> を規定ラウンド数。</li>
+              <li>あるシーカーが移動を終えた時点で<strong>両者が同じマスに止まっていればシーカーの勝ち</strong>。会えなければ王様の勝ち。</li>
+            </ul>
+            <p class="rules-foot">パス回しのため、手番の切り替え時にハンドオフ画面を挟んで隠し情報の覗き見を防ぎます。</p>
+          </div>
+        </details>
         <button id="btn-start" class="primary big">ゲーム開始</button>
       </div>
     </div>
