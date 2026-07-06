@@ -18,7 +18,7 @@ import {
   KING,
 } from '../js/ai.js';
 
-// 既定は「確定設定(7x7 / d4・d6 / king)」に変わったため、従来の 9x9・固定3・全公開を
+// 既定が 7x7 / d4・d6 / king に変わったため、従来の 9x9・固定3・全公開を
 // 前提にしたテストが崩れないよう、明示指定が無い項目はクラシック設定を被せる。
 const CLASSIC = { BOARD_SIZE: 9, STEPS: {}, PUBLIC_ROLLS: 'all' };
 const createGame = (cfg = {}) => _createGame({ ...CLASSIC, ...cfg });

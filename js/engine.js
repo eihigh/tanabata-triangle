@@ -3,14 +3,14 @@
 // 共有座標グリッド上に織姫・彦星の2駒が存在する。各シーカーは自分の軌跡・自分の
 // デブリ・交差ヒントだけを見る別ビューを持ち、王様は両盤面を常に見られる。
 
-// ---- 調整可能な定数（既定＝ゲーム開始画面の確定設定に一致）------------------
+// ---- 調整可能な定数（既定＝ゲーム開始画面の初期選択に一致）------------------
 export const DEFAULTS = {
   BOARD_SIZE: 7, // 7x7（座標 0..6）
   STEPS_PER_MOVE: 3, // STEPS 未指定シーカーのフォールバック移動量（固定）
-  // 既定の移動量（開始画面の確定設定: 織姫=1d4 / 彦星=1d6）。
+  // 既定の移動量（織姫=1d4 / 彦星=1d6）。
   // 数値 or 'd4'/'d6'。省略時は STEPS_PER_MOVE にフォールバック。
   STEPS: { orihime: 'd4', hikoboshi: 'd6' },
-  // 出目の公開範囲（確定設定: 王様のみ）。'all' | 'king' | 'none'。
+  // 出目の公開範囲（既定: 王様のみ）。'all' | 'king' | 'none'。
   PUBLIC_ROLLS: 'king',
   MAX_ROUNDS: 7, // 各シーカーが7回移動
   DEBRIS_PER_TURN: 1, // 移動前に王様が置くデブリ数
@@ -114,7 +114,7 @@ export function createGame(config = {}) {
     orihime: { x: 0, y: 0 },
     hikoboshi: { x: size - 1, y: size - 1 },
   };
-  // 移動量スペック: 指定が無ければ DEFAULTS.STEPS（確定設定の d4/d6）、それも無ければ STEPS_PER_MOVE。
+  // 移動量スペック: 指定が無ければ DEFAULTS.STEPS（既定の d4/d6）、それも無ければ STEPS_PER_MOVE。
   // config.STEPS は「盤全体を丸ごと上書き」なので、片側だけ指定した場合の他方は STEPS_PER_MOVE に戻る。
   const stepsCfg = cfg.STEPS || {};
   const specFor = (who) => parseStepSpec(stepsCfg[who], cfg.STEPS_PER_MOVE);

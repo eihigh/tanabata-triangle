@@ -59,7 +59,7 @@ function configFromArgs() {
 }
 
 // combos モードで比較するバリアント（固定＋ダイス）。
-// engine の DEFAULTS が確定設定(7x7/d4・d6)に変わったため、各バリアントは盤サイズ・移動量を明示する。
+// engine の DEFAULTS が既定(7x7/d4・d6)に変わったため、各バリアントは盤サイズ・移動量を明示する。
 const COMBOS = [
   ['baseline (9x9, 織姫3/彦星3)', { BOARD_SIZE: 9, STEPS: { orihime: 3, hikoboshi: 3 } }],
   ['A       (9x9, 織姫2/彦星3)', { BOARD_SIZE: 9, STEPS: { orihime: 2 } }],
