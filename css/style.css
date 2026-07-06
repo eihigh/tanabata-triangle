@@ -285,11 +285,21 @@ button:disabled {
   background: var(--accent);
   color: #fff;
 }
+.setup-sub {
+  font-size: 0.8rem !important;
+  color: var(--muted);
+  text-align: left;
+  letter-spacing: 0.08em;
+  margin: 4px 0 10px !important;
+  border-top: 1px solid #2a3252;
+  padding-top: 16px;
+}
+
 .setup-note {
   font-size: 0.82rem !important;
   color: var(--muted);
   min-height: 1.2em;
-  margin: 0 0 20px !important;
+  margin: 16px 0 20px !important;
 }
 
 .veil-icon.spin {

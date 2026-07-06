@@ -53,6 +53,8 @@ const ui = {
 
 // 役の担当: 'human' | 'ai'
 let roles = { orihime: 'human', hikoboshi: 'ai', king: 'ai' };
+// バリアント設定（開始画面で選択。彦星は常に3マス）
+let variant = { boardSize: 9, orihimeSteps: 3 };
 
 let state;
 let path; // 移動入力中の {x,y} 配列（先頭=現在位置）
@@ -67,7 +69,10 @@ function actorIsAI() {
 const canRevealAI = () => roles.orihime !== 'human' && roles.hikoboshi !== 'human';
 
 function start() {
-  state = createGame();
+  state = createGame({
+    BOARD_SIZE: variant.boardSize,
+    STEPS: { orihime: variant.orihimeSteps },
+  });
   path = null;
   debrisPick = null;
   ui.overlay.classList.add('hidden');
@@ -413,6 +418,26 @@ function initRolePicker() {
   updateSetupNote();
 }
 
+// バリアント選択（盤面サイズ・織姫の移動量）。数値なので parseInt して保持。
+function initVariantPicker() {
+  const keyOf = { board: 'boardSize', oriSteps: 'orihimeSteps' };
+  el('variant-picker')
+    .querySelectorAll('.role-row')
+    .forEach((row) => {
+      const vkey = keyOf[row.dataset.variant];
+      const buttons = row.querySelectorAll('.seg button');
+      const paint = () =>
+        buttons.forEach((b) => b.classList.toggle('active', Number(b.dataset.val) === variant[vkey]));
+      buttons.forEach((b) =>
+        b.addEventListener('click', () => {
+          variant[vkey] = Number(b.dataset.val);
+          paint();
+        }),
+      );
+      paint();
+    });
+}
+
 function updateSetupNote() {
   const humanSeeker = roles.orihime === 'human' || roles.hikoboshi === 'human';
   ui.setupNote.textContent = humanSeeker
@@ -444,4 +469,5 @@ window.addEventListener('DOMContentLoaded', () => {
   el('btn-restart').onclick = showSetup;
   el('btn-start').onclick = start;
   initRolePicker();
+  initVariantPicker();
 });
