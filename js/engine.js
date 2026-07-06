@@ -67,6 +67,12 @@ export function createGame(config = {}) {
   return {
     size,
     stepsPerMove: cfg.STEPS_PER_MOVE, // 既定移動量（表示・参照用）
+    // 開始位置は公開のゲーム設定（隠し情報ではない）。シーカーAIが相手の
+    // 到達可能範囲を推論するために参照してよい。
+    starts: {
+      orihime: { ...start.orihime },
+      hikoboshi: { ...start.hikoboshi },
+    },
     maxRounds: cfg.MAX_ROUNDS,
     debrisPerTurn: cfg.DEBRIS_PER_TURN,
     round: 1,
@@ -316,6 +322,17 @@ export function advancePhase(state) {
       throw new Error(`advancePhase: not a move phase (${state.phase})`);
   }
   return state;
+}
+
+// who が完了した移動数（公開情報: 手番構造から導出できる）。
+// ラウンド r 中、織姫は自分のデブリ/移動フェーズ時点で r-1 手済・以降 r 手済。
+// 彦星はラウンド末に動くため、ラウンド r 内のどのフェーズでも r-1 手済。
+export function movesSoFar(state, who) {
+  const beforeOrihimeMoved =
+    state.phase === PHASE.KING_DEBRIS_ORIHIME ||
+    state.phase === PHASE.MOVE_ORIHIME;
+  if (who === 'orihime') return beforeOrihimeMoved ? state.round - 1 : state.round;
+  return state.round - 1;
 }
 
 // 現在移動すべきシーカー（デブリ/移動フェーズ問わず）を返す。

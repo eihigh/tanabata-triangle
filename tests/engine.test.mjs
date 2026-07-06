@@ -11,6 +11,7 @@ import {
   checkMeeting,
   resolveStuck,
   activeSeeker,
+  movesSoFar,
   key,
   DIRS,
   PHASE,
@@ -179,6 +180,20 @@ function throws(fn, msg) {
     g.hikoboshi.revealedHints.has('5,0') && g.hikoboshi.revealedHints.has('6,0'),
     'hikoboshi snapshot updates at its pre-move turn start',
   );
+}
+
+// --- movesSoFar: 手番構造からの移動数導出 -----------------------------------
+{
+  const g = createGame();
+  ok(movesSoFar(g, 'orihime') === 0 && movesSoFar(g, 'hikoboshi') === 0, 'round1 KD_O: both 0 moves');
+  placeDebris(g, 'orihime', { x: 5, y: 0 });
+  ok(movesSoFar(g, 'orihime') === 0, 'MOVE_ORIHIME: orihime not yet moved');
+  applyMove(g, 'orihime', ['down', 'down', 'down']);
+  ok(movesSoFar(g, 'orihime') === 1 && movesSoFar(g, 'hikoboshi') === 0, 'KD_H: orihime 1, hikoboshi 0');
+  placeDebris(g, 'hikoboshi', { x: 0, y: 5 });
+  applyMove(g, 'hikoboshi', ['up', 'up', 'up']);
+  ok(movesSoFar(g, 'orihime') === 1 && movesSoFar(g, 'hikoboshi') === 1, 'round2 KD_O: both 1 move');
+  ok(g.starts.orihime.x === 0 && g.starts.hikoboshi.x === 8, 'public starts recorded');
 }
 
 // --- バリアントA: 織姫だけ移動量2 ------------------------------------------

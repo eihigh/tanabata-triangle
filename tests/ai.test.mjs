@@ -13,6 +13,9 @@ import {
   mulberry32,
   chooseSeekerMove,
   chooseKingDebris,
+  buildOpponentBelief,
+  SEEKER,
+  KING,
 } from '../js/ai.js';
 
 let passed = 0;
@@ -63,18 +66,87 @@ function ok(cond, msg) {
   ok(g2.phase === PHASE.KING_DEBRIS_HIKOBOSHI, 'applied AI move advances phase');
 }
 
-// --- シーカーAI: ヒント方向へ寄る傾向（温度0で貪欲） -----------------------
+// --- 信念分布: 到達可能性・パリティ・負の情報 -------------------------------
 {
-  // 織姫 (0,4) に対しヒントを (6,4) 付近に置くと、焦点は右側 → 右へ寄るはず
+  // 織姫視点。彦星は (8,8) 開始・移動3・まだ0手（round1 織姫の移動前）
+  const g = createGame();
+  placeDebris(g, 'orihime', { x: 5, y: 0 }); // MOVE_ORIHIME へ
+  const b = buildOpponentBelief(g, 'orihime');
+  const N = g.size;
+  ok(Math.abs([...b].reduce((a, v) => a + v, 0) - 1) < 1e-9, 'belief sums to 1');
+  ok(b[8 * N + 8] > 0.99, '0 moves -> opponent exactly at start');
+  ok(b[0] === 0, 'far cell excluded by reach constraint');
+}
+{
+  // 1手（3マス）後: 距離3以内かつパリティの合うマスのみ
+  const g = createGame();
+  placeDebris(g, 'orihime', { x: 5, y: 0 });
+  applyMove(g, 'orihime', ['down', 'down', 'down']);
+  placeDebris(g, 'hikoboshi', { x: 0, y: 5 });
+  applyMove(g, 'hikoboshi', ['up', 'up', 'up']); // 彦星1手済
+  placeDebris(g, 'orihime', { x: 5, y: 1 }); // round2 織姫移動前
+  const b = buildOpponentBelief(g, 'orihime');
+  const N = g.size;
+  ok(b[8 * N + 8] === 0, 'parity: cannot be back at start after odd steps (3)');
+  ok(b[5 * N + 8] > 0, 'distance-3 cell (8,5) possible');
+  ok(b[6 * N + 8] === 0, 'parity-mismatch cell (8,6) excluded');
+  ok(b[4 * N + 8] === 0, 'cell beyond reach (8,4) excluded');
+  ok(b[0 * N + 0] === 0, 'far corner excluded');
+  // 負の情報: 自分の軌跡（ヒント無し）に相手はいない
+  for (const k of g.orihime.trail) {
+    if (!g.orihime.revealedHints.has(k)) {
+      const [x, y] = k.split(',').map(Number);
+      ok(b[y * N + x] === 0, `negative info: own non-hint trail cell ${k} excluded`);
+    }
+  }
+}
+
+// --- シーカーAI: ヒント方向へ寄る傾向（低温で貪欲） -------------------------
+{
+  // 織姫 (0,4)・彦星 (8,4)。ヒントを右側に人工設定 → 焦点は右 → 右へ寄るはず
   const g = createGame({ START: { orihime: { x: 0, y: 4 }, hikoboshi: { x: 8, y: 4 } } });
-  // 王様デブリを遠くに置いて MOVE へ
   placeDebris(g, 'orihime', { x: 0, y: 0 });
-  // 手番開始スナップショットを人工的に設定（右側にヒント）
   g.orihime.revealedHints = new Set(['6,4', '7,4']);
-  // 温度を極小にすると分布はほぼ最良手に集中する → 実RNGで最良手が選ばれる
-  const greedy = chooseSeekerMove(g, 'orihime', mulberry32(1), { alpha: 1, beta: 6, gammaPath: 0.15, temperature: 0.01 });
+  const greedy = chooseSeekerMove(g, 'orihime', mulberry32(1), { ...SEEKER, temperature: 0.01 });
   ok(greedy.end.x > 0, 'greedy move heads toward hint (rightward)');
   ok(greedy.focal.x >= 5, 'focal near the hint cluster');
+}
+
+// --- ぐるぐる解消: 軌跡のユニークマス数が移動に応じて増える -----------------
+{
+  const g = createGame();
+  const rng = mulberry32(777);
+  // 3ラウンド分（各シーカー3手）進める
+  for (let r = 0; r < 3; r++) {
+    placeDebris(g, 'orihime', chooseKingDebris(g, 'orihime', rng, { ...KING, epsilon: 0 }));
+    applyMove(g, 'orihime', chooseSeekerMove(g, 'orihime', rng, { ...SEEKER, epsilon: 0 }).path);
+    if (g.phase === PHASE.GAME_OVER) break;
+    placeDebris(g, 'hikoboshi', chooseKingDebris(g, 'hikoboshi', rng, { ...KING, epsilon: 0 }));
+    applyMove(g, 'hikoboshi', chooseSeekerMove(g, 'hikoboshi', rng, { ...SEEKER, epsilon: 0 }).path);
+    if (g.phase === PHASE.GAME_OVER) break;
+  }
+  if (g.phase !== PHASE.GAME_OVER) {
+    // 3手（9マス通過）で開始1マス+9マス中、少なくとも 1+1.5×3 = 5.5 → 6ユニーク以上
+    ok(g.orihime.trail.size >= 6, `orihime explores (trail ${g.orihime.trail.size} >= 6)`);
+    ok(g.hikoboshi.trail.size >= 6, `hikoboshi explores (trail ${g.hikoboshi.trail.size} >= 6)`);
+  } else {
+    ok(true, 'game ended early (meeting) — exploration moot');
+    ok(true, 'game ended early (meeting) — exploration moot');
+  }
+}
+
+// --- 王様AI: 即負け脅威の遮断 ------------------------------------------------
+{
+  // 織姫(0,0)・彦星(0,3): 織姫は up... いや down×3 の一本道で彦星に着地できる脅威。
+  // 3マスちょうどで (0,3) に到達する経路は (0,1)(0,2) を通る直進のみ。
+  // 王様はどちらかを塞いで脅威を断つはず。
+  const g = createGame({
+    START: { orihime: { x: 0, y: 0 }, hikoboshi: { x: 0, y: 3 } },
+    INITIAL_CENTER_DEBRIS: false,
+  });
+  const cell = chooseKingDebris(g, 'orihime', mulberry32(5), { ...KING, temperature: 0.01, epsilon: 0 });
+  const k = key(cell);
+  ok(k === '0,1' || k === '0,2', `king cuts the only landing corridor (got ${k})`);
 }
 
 // --- 王様AI: 設置可能マスを返す・再現性 -----------------------------------

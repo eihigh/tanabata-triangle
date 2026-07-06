@@ -1,10 +1,28 @@
 // 確率分布ベースの AI（純粋・DOM非依存の ES モジュール）。
 //
-// シーカーAI（織姫/彦星）: 自分が正当に知る情報（自分の軌跡・デブリ・交差ヒントの
-//   スナップショット）だけから、相手のいそうな場所／合流点の確率場を作り、移動先候補を
-//   ソフトマックス確率分布でサンプリングして1手を選ぶ。相手の盤面は一切覗かない。
-// 王様AI: 両盤面を見られる立場を活かし、シーカーが合流点へ近づくのを最も妨げるマスを、
-//   これも確率分布（ソフトマックス）でサンプリングしてデブリ設置先に選ぶ。
+// ■ シーカーAI（織姫/彦星）
+//   相手の盤面は一切覗かず、正当に知りうる情報だけで「相手の現在位置の信念分布」を
+//   ベイズ的に構築して手を選ぶ。使う情報:
+//   - 公開のゲーム設定: 相手の開始位置 (state.starts)・移動量 (state[other].steps)・
+//     手番構造から導出できる相手の完了移動数 (movesSoFar)
+//   - 自分の軌跡・自分の盤のデブリ
+//   - 交差ヒントのスナップショット (revealedHints)
+//   信念分布の骨子:
+//   1. 到達可能性＋パリティ: 相手は開始位置から「完了手数×移動量」以内かつ偶奇の合う
+//      マスにしかいられない（硬い制約。盤の約半分が即除外される）
+//   2. 負の情報: 相手の現在位置が自分の軌跡上ならヒントに必ず現れる。よって
+//      「自分の軌跡のうちヒントに無いマス」に相手はいない（確率0）
+//   3. 正の情報: ヒントの周辺に確率の山（相手はそこを通った）
+//   4. 前進事前: 相手も共有焦点（ヒント重心 or 盤中央）へ向かうと仮定した期待位置
+//   移動の評価は「着地=即合流の確率」「相手への期待距離」「共有焦点への収束」
+//   「新規マス探索（情報獲得）」の混合。ソフトマックス分布からサンプリング。
+//
+// ■ 王様AI
+//   両盤面を見られる立場を活かし、実際の両者の位置に基づいて
+//   「今の手番で着地合流される脅威の遮断」「着地急所（相手位置の隣接）封鎖」
+//   「二人の間の回廊封鎖」「接近妨害」を評価してデブリ先を選ぶ。
+//
+// epsilon（乱数混入率）: 0=分布通り、1=完全ランダム。両AIに共通の実力ノブ。
 
 import {
   key,
@@ -13,7 +31,7 @@ import {
   reachEndsGrid,
   buildBlockedGrid,
   canPlaceDebris,
-  hints as trueHints,
+  movesSoFar,
 } from './engine.js';
 
 // ---- 乱数（再現性のため差し替え可能。既定は Math.random）--------------------
@@ -31,6 +49,7 @@ export function mulberry32(seed) {
 // ---- 小道具 -----------------------------------------------------------------
 const manhattan = (a, b) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 const centerOf = (size) => ({ x: Math.floor(size / 2), y: Math.floor(size / 2) });
+const otherOf = (who) => (who === 'orihime' ? 'hikoboshi' : 'orihime');
 
 // スコア配列をソフトマックス確率分布に変換して1つサンプリング。probs も返す。
 function softmaxSample(items, scores, temperature, rng) {
@@ -47,57 +66,7 @@ function softmaxSample(items, scores, temperature, rng) {
   return { item: items[items.length - 1], index: items.length - 1, probs };
 }
 
-// 発生源（bumps）から等方ガウスの確率場を作り、正規化して返す（Float64Array, size*size）。
-function buildField(size, bumps, sigma) {
-  const field = new Float64Array(size * size);
-  const twoS2 = 2 * sigma * sigma;
-  let total = 0;
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      let v = 0;
-      for (const b of bumps) {
-        const dx = x - b.x;
-        const dy = y - b.y;
-        v += Math.exp(-(dx * dx + dy * dy) / twoS2);
-      }
-      field[y * size + x] = v;
-      total += v;
-    }
-  }
-  if (total > 0) for (let i = 0; i < field.length; i++) field[i] /= total;
-  return field;
-}
-
-// 確率場の最大セル（同点は中央に近い方）を焦点として返す。
-function argmaxCell(field, size) {
-  const c = centerOf(size);
-  let best = -1;
-  let bestCell = c;
-  let bestToCenter = Infinity;
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const v = field[y * size + x];
-      const d = Math.abs(x - c.x) + Math.abs(y - c.y);
-      if (v > best + 1e-12 || (Math.abs(v - best) <= 1e-12 && d < bestToCenter)) {
-        best = v;
-        bestCell = { x, y };
-        bestToCenter = d;
-      }
-    }
-  }
-  return bestCell;
-}
-
-// ヒント集合（"x,y" の Set）から確率場と焦点を作る。空なら盤中央を焦点にする。
-function fieldFromHints(size, hintSet, sigma = 2) {
-  const bumps = [...hintSet].map(parseKey);
-  if (bumps.length === 0) bumps.push(centerOf(size));
-  const field = buildField(size, bumps, sigma);
-  return { field, focal: argmaxCell(field, size) };
-}
-
 // 確率 epsilon で候補から一様ランダムに選び、そうでなければソフトマックス標本抽出。
-// epsilon は「乱数混入率」: 0 で AI 本来の分布、1 で完全ランダム。
 function pickWithEpsilon(cands, scores, temperature, epsilon, rng) {
   const eps = epsilon || 0;
   if (eps > 0 && rng() < eps) {
@@ -107,102 +76,239 @@ function pickWithEpsilon(cands, scores, temperature, epsilon, rng) {
   return softmaxSample(cands, scores, temperature, rng);
 }
 
+// p0 から F へ L1 距離 budget 分だけ前進した期待位置（近似）。
+function advanceToward(p0, F, budget) {
+  const dx = F.x - p0.x;
+  const dy = F.y - p0.y;
+  const total = Math.abs(dx) + Math.abs(dy);
+  if (total <= budget) return { x: F.x, y: F.y };
+  const mx = Math.round((budget * Math.abs(dx)) / total);
+  const my = budget - mx;
+  return { x: p0.x + Math.sign(dx) * mx, y: p0.y + Math.sign(dy) * my };
+}
+
+// 共有焦点: ヒント重心（両者にとって共通知識＝ランデブーの focal point）。無ければ盤中央。
+export function sharedFocal(state, who) {
+  const hints = state[who].revealedHints;
+  if (hints.size === 0) return centerOf(state.size);
+  let sx = 0;
+  let sy = 0;
+  for (const k of hints) {
+    const c = parseKey(k);
+    sx += c.x;
+    sy += c.y;
+  }
+  return { x: Math.round(sx / hints.size), y: Math.round(sy / hints.size) };
+}
+
+// ---- 相手の現在位置の信念分布 ------------------------------------------------
+export const BELIEF = { sigmaAdvance: 2.5, sigmaHint: 1.6, hintWeight: 1.2 };
+
+// who から見た相手の現在位置の確率分布（Float64Array N*N、総和1）。
+// 相手の盤面状態（pos/trail/debris）には一切触れない。
+export function buildOpponentBelief(state, who, params = BELIEF) {
+  const N = state.size;
+  const other = otherOf(who);
+  const p0 = state.starts[other]; // 公開設定
+  const sO = state[other].steps; // 公開設定
+  const k = movesSoFar(state, other); // 手番構造から導出
+  const my = state[who];
+  const budget = k * sO;
+  const F = sharedFocal(state, who);
+  const expPos = advanceToward(p0, F, budget);
+  const hintCells = [...my.revealedHints].map(parseKey);
+
+  const b = new Float64Array(N * N);
+  const twoSa = 2 * params.sigmaAdvance * params.sigmaAdvance;
+  const twoSh = 2 * params.sigmaHint * params.sigmaHint;
+  let tot = 0;
+  for (let y = 0; y < N; y++) {
+    for (let x = 0; x < N; x++) {
+      const d0 = Math.abs(x - p0.x) + Math.abs(y - p0.y);
+      // 1. 到達可能性＋パリティ（硬い制約）
+      if (d0 > budget || (budget - d0) % 2 !== 0) continue;
+      // 2. 負の情報: 自分の軌跡のうちヒントに無いマスに相手は「今」いない
+      const kk = `${x},${y}`;
+      if (my.trail.has(kk) && !my.revealedHints.has(kk)) continue;
+      // 3+4. 前進事前 ＋ ヒントの山
+      const de = Math.abs(x - expPos.x) + Math.abs(y - expPos.y);
+      let w = Math.exp(-(de * de) / twoSa) + 1e-4;
+      for (const h of hintCells) {
+        const dh = Math.abs(x - h.x) + Math.abs(y - h.y);
+        w += params.hintWeight * Math.exp(-(dh * dh) / twoSh);
+      }
+      b[y * N + x] = w;
+      tot += w;
+    }
+  }
+  if (tot === 0) {
+    // 矛盾（近似のせい）時: 制約を捨てて一様
+    b.fill(1 / (N * N));
+    return b;
+  }
+  for (let i = 0; i < b.length; i++) b[i] /= tot;
+  return b;
+}
+
 // ---- シーカーAI -------------------------------------------------------------
-// パラメータ（挙動の調整用）。epsilon は乱数混入率（0=分布通り, 1=完全ランダム）。
-export const SEEKER = { alpha: 1.0, beta: 6.0, gammaPath: 0.15, temperature: 0.6, epsilon: 0 };
+// 重み。epsilon は乱数混入率（0=分布通り, 1=完全ランダム）。
+export const SEEKER = {
+  wWin: 60, // 着地=即合流の確率（支配項）
+  wDist: 1.0, // 相手への期待距離
+  wFocal: 0.7, // 共有焦点への収束（ランデブー）
+  wExplore: 0.9, // 経路中の新規マス数（ぐるぐる解消・情報獲得）
+  wSignal: 3.0, // 相手の居そうな帯を横切る＝ヒント生成
+  wMulti: 0.1, // 同一着地への経路数
+  temperature: 0.35,
+  epsilon: 0,
+};
 
-// 自分が知る情報だけで1手（path: 方向名配列）を返す。動けない場合は null。
-// 返り値 { path, end, focal, probs } … probs は移動先候補の確率分布（デバッグ/表示用）。
+// 自分が知る情報だけで1手を返す。動けない場合は null。
+// 返り値 { path, end, focal, probs }。
 export function chooseSeekerMove(state, who, rng = Math.random, params = SEEKER) {
-  const size = state.size;
-  const { field, focal } = fieldFromHints(size, state[who].revealedHints);
+  const N = state.size;
+  const my = state[who];
+  const belief = buildOpponentBelief(state, who);
+  const F = sharedFocal(state, who);
 
-  // 端点ごとに集約（同一端点への複数経路は数え、到達しやすさの弱い重みにする）
-  const byEnd = new Map(); // endKey -> { end, path, count }
+  // 着地マスで集約。代表経路は「新規マス数が最大」のものを保持（探索性の高い経路を優先）
+  const byEnd = new Map(); // endKey -> { end, path, count, newCells, pathBelief }
   for (const m of enumerateMoves(state, who)) {
-    const k = key(m.end);
-    const cur = byEnd.get(k);
-    if (cur) cur.count += 1;
-    else byEnd.set(k, { end: m.end, path: m.path, count: 1 });
+    let newCells = 0;
+    let pathBelief = 0;
+    let px = my.pos.x;
+    let py = my.pos.y;
+    // enumerateMoves の path は方向名列。着地セル列を再構成して評価
+    const cells = [];
+    for (const dname of m.path) {
+      if (dname === 'up') py--;
+      else if (dname === 'down') py++;
+      else if (dname === 'left') px--;
+      else px++;
+      cells.push(py * N + px);
+    }
+    for (const ci of cells) {
+      const ck = `${ci % N},${(ci - (ci % N)) / N}`;
+      if (!my.trail.has(ck)) newCells++;
+      pathBelief += belief[ci];
+    }
+    const ek = key(m.end);
+    const cur = byEnd.get(ek);
+    if (cur) {
+      cur.count += 1;
+      if (newCells > cur.newCells) {
+        cur.newCells = newCells;
+        cur.path = m.path;
+        cur.pathBelief = pathBelief;
+      }
+    } else {
+      byEnd.set(ek, { end: m.end, path: m.path, count: 1, newCells, pathBelief });
+    }
   }
   const cands = [...byEnd.values()];
   if (cands.length === 0) return null; // 囲まれて動けない
 
+  // 相手への期待距離 Σ belief[c]·L1(e,c) を各候補で計算
   const scores = cands.map((c) => {
-    const dist = manhattan(c.end, focal);
-    const pMeet = field[c.end.y * size + c.end.x]; // 相手がちょうどそこにいる確率の代理
+    const e = c.end;
+    let expDist = 0;
+    for (let y = 0; y < N; y++) {
+      for (let x = 0; x < N; x++) {
+        const p = belief[y * N + x];
+        if (p > 0) expDist += p * (Math.abs(e.x - x) + Math.abs(e.y - y));
+      }
+    }
     return (
-      -params.alpha * dist +
-      params.beta * pMeet +
-      params.gammaPath * Math.log(c.count)
+      params.wWin * belief[e.y * N + e.x] -
+      params.wDist * expDist -
+      params.wFocal * manhattan(e, F) +
+      params.wExplore * c.newCells +
+      params.wSignal * c.pathBelief +
+      params.wMulti * Math.log(c.count)
     );
   });
+
   const { item, probs } = pickWithEpsilon(cands, scores, params.temperature, params.epsilon, rng);
-  return { path: item.path, end: item.end, focal, probs };
+  return { path: item.path, end: item.end, focal: F, probs };
 }
 
 // ---- 王様AI -----------------------------------------------------------------
-export const KING = { radius: 4, temperature: 0.5, focalBonus: 2.0, epsilon: 0 };
-
-// 王様の焦点: 両盤面の真の交差（＝シーカーが目指す合流点）。無ければ盤中央。
-function kingFocal(state) {
-  const { focal } = fieldFromHints(state.size, trueHints(state));
-  return focal;
-}
+export const KING = {
+  radius: 4, // 動くシーカー周辺の候補半径
+  threatPenalty: 40, // 「今の手番で着地合流される」脅威を残す候補への減点
+  wObstruct: 4.0, // 接近妨害（相手位置への最接近距離の悪化量）
+  adjacentBonus: 4.0, // 相手位置の隣接マス（着地急所）
+  corridorBonus: 3.0, // 二人の中点付近（回廊封鎖）
+  temperature: 0.2,
+  epsilon: 0,
+};
 
 // who（次に動くシーカー）の盤面に置くデブリ1マスを返す。置ける所が無ければ null。
+// 王様は両盤面を見られる（正当な情報優位）。
 export function chooseKingDebris(state, who, rng = Math.random, params = KING) {
-  const size = state.size;
-  const focal = kingFocal(state);
-  const seeker = state[who];
-  const steps = seeker.steps; // このシーカーの移動量
-  const startIdx = seeker.pos.y * size + seeker.pos.x;
+  const N = state.size;
+  const mover = state[who];
+  const target = state[otherOf(who)];
+  const p = target.pos; // 実際の合流目標
+  const pIdx = p.y * N + p.x;
+  const steps = mover.steps;
+  const startIdx = mover.pos.y * N + mover.pos.x;
+  const mid = { x: Math.round((mover.pos.x + p.x) / 2), y: Math.round((mover.pos.y + p.y) / 2) };
 
-  // 到達端点(index配列)から焦点への最短距離を返す高速版
-  const grid = buildBlockedGrid(state, who); // デブリのみ進入不可
-  const minDistFocal = (ends) => {
-    let m = Infinity;
+  const grid = buildBlockedGrid(state, who); // この盤のデブリのみ進入不可
+
+  // 到達端点集合から「p が到達可能か」「p への最短距離」を同時に得る
+  const evalReach = (ends) => {
+    let best = Infinity;
+    let threat = false;
     for (let i = 0; i < ends.length; i++) {
       const idx = ends[i];
-      const x = idx % size;
-      const d = Math.abs(x - focal.x) + Math.abs((idx - x) / size - focal.y);
-      if (d < m) m = d;
+      if (idx === pIdx) threat = true;
+      const x = idx % N;
+      const d = Math.abs(x - p.x) + Math.abs((idx - x) / N - p.y);
+      if (d < best) best = d;
     }
-    return m;
+    return { threat, best };
   };
+  const base = evalReach(reachEndsGrid(N, steps, startIdx, grid));
+  const baseBest = Number.isFinite(base.best) ? base.best : manhattan(mover.pos, p);
 
-  // 妨害しない場合にシーカーが焦点へ最接近できる距離（基準値）
-  let base = minDistFocal(reachEndsGrid(size, steps, startIdx, grid));
-  if (!Number.isFinite(base)) base = manhattan(seeker.pos, focal); // 既に詰み気味
-
-  // 設置可否はエンジンの規則に一本化（軌跡・既存デブリ・盤外・相手の現在位置を除外）
-  const placeable = (x, y) => canPlaceDebris(state, who, { x, y });
-  // 候補: シーカー付近の設置可能マス（軌跡・既存デブリ・盤外は除外）
-  const cands = [];
+  // 候補集合: 動くシーカー周辺 ∪ 相手位置の4近傍 ∪ 中点周辺（canPlaceDebris で濾過）
+  const candSet = new Map();
+  const addCand = (x, y) => {
+    if (x < 0 || y < 0 || x >= N || y >= N) return;
+    const k = `${x},${y}`;
+    if (candSet.has(k)) return;
+    if (!canPlaceDebris(state, who, { x, y })) return;
+    candSet.set(k, { x, y });
+  };
   const R = params.radius;
-  for (let y = seeker.pos.y - R; y <= seeker.pos.y + R; y++) {
-    for (let x = seeker.pos.x - R; x <= seeker.pos.x + R; x++) {
-      if (placeable(x, y)) cands.push({ x, y });
-    }
+  for (let y = mover.pos.y - R; y <= mover.pos.y + R; y++)
+    for (let x = mover.pos.x - R; x <= mover.pos.x + R; x++) addCand(x, y);
+  addCand(p.x + 1, p.y);
+  addCand(p.x - 1, p.y);
+  addCand(p.x, p.y + 1);
+  addCand(p.x, p.y - 1);
+  for (let y = mid.y - 2; y <= mid.y + 2; y++)
+    for (let x = mid.x - 2; x <= mid.x + 2; x++) addCand(x, y);
+  // 空きが無ければ盤面全体（終盤の保険）
+  if (candSet.size === 0) {
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) addCand(x, y);
   }
-  // 付近に空きが無ければ盤面全体から探す（終盤の保険）
-  if (cands.length === 0) {
-    for (let y = 0; y < size; y++)
-      for (let x = 0; x < size; x++) if (placeable(x, y)) cands.push({ x, y });
-  }
+  const cands = [...candSet.values()];
   if (cands.length === 0) return null; // 盤面が埋まっている（実質起こらない）
 
-  const distToFocal = (c) => manhattan(c, focal);
   const scores = cands.map((d) => {
-    // d をブロックした時にシーカーが焦点へ最接近できる距離（gridを一時的に立てる）
-    const di = d.y * size + d.x;
+    const di = d.y * N + d.x;
     grid[di] = 1;
-    let best = minDistFocal(reachEndsGrid(size, steps, startIdx, grid));
+    const r = evalReach(reachEndsGrid(N, steps, startIdx, grid));
     grid[di] = 0;
-    if (!Number.isFinite(best)) best = base + size; // 完全に詰ませられるなら高評価
-    const obstruction = best - base; // >0 なら接近を妨げている
-    const nearFocal = params.focalBonus / (1 + distToFocal(d)); // 合流点周辺を固める
-    return obstruction + nearFocal;
+    const best = Number.isFinite(r.best) ? r.best : baseBest + N; // 完全封鎖は高評価
+    let score = params.wObstruct * (best - baseBest);
+    if (base.threat && r.threat) score -= params.threatPenalty; // 脅威を放置する候補は大減点
+    if (manhattan(d, p) === 1) score += params.adjacentBonus; // 着地急所
+    score += params.corridorBonus * Math.exp(-manhattan(d, mid) / 2); // 回廊封鎖
+    return score;
   });
 
   const { item } = pickWithEpsilon(cands, scores, params.temperature, params.epsilon, rng);

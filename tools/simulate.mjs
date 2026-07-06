@@ -54,11 +54,10 @@ const COMBOS = [
 ];
 
 // ---- 1ゲームのシミュレーション ---------------------------------------------
+// シーカー/王様の epsilon を独立に指定できる。
 // 返り値: { winner, clearedRound }  clearedRound は出会えたラウンド（負けなら null）
-function simulateGame(rng, epsilon, gameConfig) {
+function simulateGame(rng, seekerEps, kingEps, gameConfig) {
   const g = createGame(gameConfig);
-  const seekerEps = TARGET === 'king' ? 0 : epsilon;
-  const kingEps = TARGET === 'seekers' ? 0 : epsilon;
   const sp = { ...SEEKER, epsilon: seekerEps };
   const kp = { ...KING, epsilon: kingEps };
 
@@ -81,14 +80,17 @@ function simulateGame(rng, epsilon, gameConfig) {
 }
 
 // ---- 1つの epsilon について N ゲーム（タイムアウト付き）--------------------
+// TARGET に応じて epsilon をどの役に混入するか決める（all/seekers/king）。
 function runEpsilon(epsilon, rng, gameConfig, maxRounds) {
+  const seekerEps = TARGET === 'king' ? 0 : epsilon;
+  const kingEps = TARGET === 'seekers' ? 0 : epsilon;
   const clearedByRound = new Array(maxRounds + 1).fill(0);
   let played = 0;
   let seekerWins = 0;
   const t0 = Date.now();
   for (let i = 0; i < GAMES; i++) {
     if (Date.now() - t0 > BUDGET_MS) break; // タイムアウト保証
-    const r = simulateGame(rng, epsilon, gameConfig);
+    const r = simulateGame(rng, seekerEps, kingEps, gameConfig);
     played++;
     if (r.winner === 'seekers') {
       seekerWins++;
@@ -127,9 +129,39 @@ console.log('七夕トライアングル シーカー勝率シミュレーショ
 console.log(`  試行/設定=${GAMES}  タイムアウト/設定=${BUDGET_MS}ms  seed=${SEED}  乱数混入対象=${TARGET}`);
 console.log('  乱数混入率 epsilon: 0=AI本来の分布, 1=完全ランダム');
 
+// ---- matrix モード: seekerEps × kingEps の 3×3 クリア率 ---------------------
+// 「シーカーの実力だけ落とすと勝率が下がり、王様の実力だけ落とすと勝率が上がる」
+// という両役の実力反映を直接示す。
+function runMatrix(gameConfig, rng) {
+  const levels = (args.matrixEps ?? '0,0.5,1').split(',').map(Number);
+  console.log('\n■ 実力マトリクス: 行=シーカーeps, 列=王様eps（値=シーカーのクリア率%）');
+  console.log('  ' + 'S\\K'.padStart(6) + ' |' + levels.map((k) => `  king=${k}`.padStart(10)).join(''));
+  console.log('  ' + '-'.repeat(8 + levels.length * 10));
+  for (const sEps of levels) {
+    const cells = [];
+    for (const kEps of levels) {
+      let played = 0;
+      let wins = 0;
+      const t0 = Date.now();
+      for (let i = 0; i < GAMES; i++) {
+        if (Date.now() - t0 > BUDGET_MS) break;
+        const r = simulateGame(rng, sEps, kEps, gameConfig);
+        played++;
+        if (r.winner === 'seekers') wins++;
+      }
+      cells.push({ sEps, kEps, rate: played ? wins / played : 0, played });
+    }
+    console.log(
+      '  ' + `s=${sEps}`.padStart(6) + ' |' + cells.map((c) => `${pct(c.rate)}%`.padStart(10)).join(''),
+    );
+  }
+}
+
 const csvRows = [];
 const tStart = Date.now();
-if (args.combos && args.combos !== 'false') {
+if (args.matrix && args.matrix !== 'false') {
+  runMatrix(configFromArgs(), rng);
+} else if (args.combos && args.combos !== 'false') {
   for (const [label, cfg] of COMBOS) runSweep(label, cfg, rng, csvRows);
 } else {
   const cfg = configFromArgs();
@@ -138,10 +170,11 @@ if (args.combos && args.combos !== 'false') {
   const hik = cfg.STEPS?.hikoboshi ?? 3;
   runSweep(`${size}x${size}, 織姫${ori}/彦星${hik}`, cfg, rng, csvRows);
 }
-console.log('\n  ※ Day t 列 = t ラウンド目までにシーカーが出会えた累積クリア率(%)');
+if (csvRows.length) {
+  console.log('\n  ※ Day t 列 = t ラウンド目までにシーカーが出会えた累積クリア率(%)');
+  const maxDays = 7;
+  const header = ['variant', 'epsilon', ...Array.from({ length: maxDays }, (_, i) => `day${i + 1}`), 'clearRate', 'games'].join(',');
+  writeFileSync(new URL('./sim-result.csv', import.meta.url), header + '\n' + csvRows.join('\n') + '\n');
+  console.log('  CSV: tools/sim-result.csv');
+}
 console.log(`  総経過: ${((Date.now() - tStart) / 1000).toFixed(1)}s`);
-
-const maxDays = 7;
-const header = ['variant', 'epsilon', ...Array.from({ length: maxDays }, (_, i) => `day${i + 1}`), 'clearRate', 'games'].join(',');
-writeFileSync(new URL('./sim-result.csv', import.meta.url), header + '\n' + csvRows.join('\n') + '\n');
-console.log('  CSV: tools/sim-result.csv');
