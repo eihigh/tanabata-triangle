@@ -193,14 +193,15 @@ function diceTag(who) {
   return state[who].stepSpec.kind === 'dice' ? ` 🎲${state[who].steps}` : '';
 }
 
-// 出目が全公開(all)のとき、相手シーカーの直近の出目（＝最後に動いた歩数）を表す注記。
+// 出目が全公開(all)のとき、相手シーカーの直近の出目を伝える1行。
+// 末尾に改行を付けて自分の移動ステータスの上に重ねて表示する。
 // まだ動いていない（traveled=0）相手や、全公開でないときは空文字。
-function opponentRollNote(who) {
+function opponentRollLine(who) {
   if (state.rollVisibility !== 'all') return '';
   const opp = who === 'orihime' ? 'hikoboshi' : 'orihime';
   if (state[opp].traveled <= 0) return ''; // まだ一度も動いていない
   const dice = state[opp].stepSpec.kind === 'dice' ? '🎲' : '';
-  return `　／　${SEEKER_LABEL[opp]}の出目 ${dice}${state[opp].steps}`;
+  return `相手（${SEEKER_LABEL[opp]}）の出目は ${dice}${state[opp].steps} でした。\n`;
 }
 
 // 王様ビューを操作なしで描画（AI観戦用）
@@ -389,10 +390,10 @@ function refreshMoveControls(who) {
   }
   ui.btnUndo.disabled = path.length <= 1;
   ui.btnConfirm.disabled = used !== need;
-  const dice = state[who].stepSpec.kind === 'dice' ? `🎲${need} ` : '';
-  ui.status.textContent = `${dice}移動: ${used} / ${need} マス` +
-    (used === need ? '（確定できます）' : `（ちょうど${need}マス動く）`) +
-    opponentRollNote(who);
+  const dice = state[who].stepSpec.kind === 'dice' ? `あなた（${SEEKER_LABEL[who]}）の出目は 🎲${need} です。` : '';
+  ui.status.textContent = opponentRollLine(who) + dice +
+    `移動: ${used} / ${need} マス` +
+    (used === need ? '（確定できます）' : `（ちょうど${need}マス動く）`);
 }
 
 // ---- 勝敗 ------------------------------------------------------------------
