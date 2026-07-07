@@ -10,8 +10,8 @@ export const DEFAULTS = {
   // 既定の移動量（織姫=1d4 / 彦星=1d6）。
   // 数値 or 'd4'/'d6'。省略時は STEPS_PER_MOVE にフォールバック。
   STEPS: { orihime: 'd4', hikoboshi: 'd6' },
-  // 出目の公開範囲（既定: 王様のみ）。'all' | 'king' | 'none'。
-  PUBLIC_ROLLS: 'king',
+  // 出目の公開範囲（既定: 全員に公開）。'all' | 'king' | 'none'。
+  PUBLIC_ROLLS: 'all',
   MAX_ROUNDS: 7, // 各シーカーが7回移動
   DEBRIS_PER_TURN: 1, // 移動前に王様が置くデブリ数
   // 初日（ラウンド1）のみ各デブリフェーズで置ける個数。未指定なら DEBRIS_PER_TURN と同じ。
@@ -144,7 +144,7 @@ export function createGame(config = {}) {
   return {
     size,
     rng, // ダイス用の乱数源（既定 Math.random、テスト/シミュは差し替え可）
-    // 出目（＝累積歩数）の可視性。既定 'king'（王様のみ公開）。'all'=王様も相手シーカーも知る、
+    // 出目（＝累積歩数）の可視性。既定 'all'（全員に公開）。'all'=王様も相手シーカーも知る、
     // 'king'=王様だけが知る、'none'=本人のみ。AIは知らない側では相手の traveled を
     // 使わず分布で推論する。
     rollVisibility: normalizeRollVisibility(cfg.PUBLIC_ROLLS),

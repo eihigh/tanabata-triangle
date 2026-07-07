@@ -75,7 +75,7 @@ python3 -m http.server 8000
 `createGame()` を引数なしで呼ぶと **7×7 / 織姫1d4・彦星1d6 / 出目king / 初期中央デブリ1 / 7ラウンド** になる。
 
 - `BOARD_SIZE`（既定 7）/ `STEPS: { orihime, hikoboshi }`（既定 `'d4'`/`'d6'`。数値 or `'d4'`/`'d6'`）/ `MAX_ROUNDS`
-- `PUBLIC_ROLLS`: 出目の公開範囲。既定 `'king'`。`'all'`（=`true`）/ `'king'` / `'none'`（=`false`）。
+- `PUBLIC_ROLLS`: 出目の公開範囲。既定 `'all'`。`'all'`（=`true`）/ `'king'` / `'none'`（=`false`）。
 - `INITIAL_CENTER_DEBRIS`: 初期中央デブリ。既定 `true`（1個）。数値→その個数を中心に固めて配置（両盤同一＝シーカー共通知識）。
 - `FIRST_ROUND_DEBRIS`: 初日（ラウンド1）のみ王様が置ける個数（未指定なら `DEBRIS_PER_TURN` と同じ）。
 - `STEPS` を丸ごと省略／`{}` 指定にすると両者 `STEPS_PER_MOVE`（既定3, 固定）にフォールバックする。
