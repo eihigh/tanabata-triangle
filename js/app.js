@@ -58,8 +58,8 @@ const ui = {
 // 役の担当: 'human' | 'ai'
 let roles = { orihime: 'human', hikoboshi: 'ai', king: 'ai' };
 // バリアント設定（開始画面で選択）。move は '2'|'3'|'d4'|'d6'。publicRolls は 'all'|'king'|'none'。
-// 既定: 7×7 ・ 織姫1d4/彦星1d6 ・ 出目は王様のみ公開(king)。
-let variant = { boardSize: 7, orihime: 'd4', hikoboshi: 'd6', publicRolls: 'king' };
+// 既定: 7×7 ・ 織姫1d4/彦星1d6 ・ 出目は全員に公開(all)。
+let variant = { boardSize: 7, orihime: 'd4', hikoboshi: 'd6', publicRolls: 'all' };
 
 let state;
 let path; // 移動入力中の {x,y} 配列（先頭=現在位置）
